@@ -12,15 +12,10 @@ import yfinance as yf
 
 st.set_page_config(
     page_title="Tradesphere | AI Market Intelligence",
-    page_icon="🔷",
+    page_icon="TS",
     layout="wide",
     initial_sidebar_state="expanded",
 )
-
-
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
 
 DEFAULT_USERNAME = "tsadmin"
 DEFAULT_PASSWORD = "TS2026!"
@@ -29,9 +24,9 @@ OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 def get_config(name: str, default: str = "") -> str:
     try:
-        value = st.secrets.get(name, "")
-        if value is not None and str(value).strip():
-            return str(value).strip()
+        secret = st.secrets.get(name, "")
+        if secret and str(secret).strip():
+            return str(secret).strip()
     except Exception:
         pass
 
@@ -74,23 +69,31 @@ def authenticate_user(username: str, password: str) -> bool:
     )
 
 
-# ---------------------------------------------------------------------------
-# Theme
-# ---------------------------------------------------------------------------
+def number(value: Any, decimals: int = 2) -> str:
+    if value is None or pd.isna(value):
+        return "N/A"
+    return f"{float(value):,.{decimals}f}"
+
+
+def money(value: Any) -> str:
+    if value is None or pd.isna(value):
+        return "N/A"
+    return f"${float(value):,.2f}"
+
 
 st.markdown(
     """
     <style>
     .stApp {
         background:
-            radial-gradient(circle at 0% 0%, rgba(37,99,235,.18), transparent 28%),
-            radial-gradient(circle at 100% 100%, rgba(20,184,166,.12), transparent 25%),
+            radial-gradient(circle at 0% 0%, rgba(37,99,235,.2), transparent 28%),
+            radial-gradient(circle at 100% 100%, rgba(20,184,166,.14), transparent 25%),
             #070d19;
         color: #e2e8f0;
     }
 
     [data-testid="stHeader"] {
-        background: rgba(7,13,25,.85);
+        background: rgba(7,13,25,.88);
     }
 
     [data-testid="stSidebar"] {
@@ -104,25 +107,35 @@ st.markdown(
         padding: 38px;
         border-radius: 28px;
         text-align: center;
-        background: rgba(15,23,42,.88);
+        background: rgba(15,23,42,.9);
         border: 1px solid rgba(148,163,184,.2);
         box-shadow: 0 25px 80px rgba(0,0,0,.45);
+    }
+
+    .ts-logo,
+    .mini-logo {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: 900;
+        letter-spacing: -2px;
+        background: linear-gradient(135deg,#2563eb,#14b8a6);
+        box-shadow: 0 12px 30px rgba(20,184,166,.3);
     }
 
     .ts-logo {
         width: 82px;
         height: 82px;
         margin: 0 auto 18px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
         border-radius: 24px;
-        color: white;
         font-size: 30px;
-        font-weight: 900;
-        letter-spacing: -2px;
-        background: linear-gradient(135deg,#2563eb,#14b8a6);
-        box-shadow: 0 12px 30px rgba(20,184,166,.3);
+    }
+
+    .mini-logo {
+        width: 46px;
+        height: 46px;
+        border-radius: 14px;
     }
 
     .login-title {
@@ -131,9 +144,9 @@ st.markdown(
         font-weight: 850;
     }
 
-    .login-subtitle {
+    .login-subtitle,
+    .dashboard-subtitle {
         color: #94a3b8;
-        margin-bottom: 25px;
     }
 
     .credential-box {
@@ -153,18 +166,6 @@ st.markdown(
         align-items: center;
         gap: 12px;
         margin-bottom: 25px;
-    }
-
-    .mini-logo {
-        width: 46px;
-        height: 46px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        border-radius: 14px;
-        color: white;
-        font-weight: 900;
-        background: linear-gradient(135deg,#2563eb,#14b8a6);
     }
 
     .brand-name {
@@ -191,10 +192,6 @@ st.markdown(
         font-size: 2.15rem;
         font-weight: 850;
         letter-spacing: -.05em;
-    }
-
-    .dashboard-subtitle {
-        color: #94a3b8;
     }
 
     .hero {
@@ -240,21 +237,20 @@ st.markdown(
         margin: 20px 0 10px;
     }
 
-    .status-card {
-        padding: 15px 18px;
-        border: 1px solid rgba(148,163,184,.14);
+    .status-card,
+    .ai-card {
+        padding: 16px 18px;
         border-radius: 16px;
-        background: rgba(15,23,42,.7);
+        background: rgba(15,23,42,.72);
+        border: 1px solid rgba(148,163,184,.15);
     }
 
     .ai-card {
-        padding: 18px;
-        border: 1px solid rgba(56,189,248,.24);
-        border-radius: 18px;
+        border-color: rgba(56,189,248,.3);
         background: linear-gradient(
             135deg,
-            rgba(30,64,175,.18),
-            rgba(15,118,110,.12)
+            rgba(30,64,175,.2),
+            rgba(15,118,110,.14)
         );
     }
 
@@ -274,10 +270,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-
-# ---------------------------------------------------------------------------
-# Login
-# ---------------------------------------------------------------------------
 
 def show_login_page() -> None:
     configured_username, configured_password = get_login_credentials()
@@ -328,7 +320,7 @@ def show_login_page() -> None:
     st.markdown(
         f"""
         <div class="credential-box">
-            <strong>Current login credentials</strong><br>
+            <strong>Demo login</strong><br>
             Username: <code>{configured_username}</code><br>
             Password: <code>{configured_password}</code>
         </div>
@@ -350,10 +342,6 @@ if not st.session_state.authenticated:
     show_login_page()
     st.stop()
 
-
-# ---------------------------------------------------------------------------
-# Market data
-# ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=300)
 def load_market_data(
@@ -396,7 +384,10 @@ def calculate_indicators(data: pd.DataFrame) -> pd.DataFrame:
     ema_12 = close.ewm(span=12, adjust=False).mean()
     ema_26 = close.ewm(span=26, adjust=False).mean()
     result["MACD"] = ema_12 - ema_26
-    result["MACD_Signal"] = result["MACD"].ewm(span=9, adjust=False).mean()
+    result["MACD_Signal"] = result["MACD"].ewm(
+        span=9,
+        adjust=False,
+    ).mean()
 
     middle = close.rolling(20).mean()
     deviation = close.rolling(20).std()
@@ -479,10 +470,6 @@ def build_alert_queue(data: pd.DataFrame) -> list[tuple[int, str]]:
     return alerts
 
 
-# ---------------------------------------------------------------------------
-# Charts
-# ---------------------------------------------------------------------------
-
 def create_price_chart(data: pd.DataFrame) -> go.Figure:
     figure = go.Figure()
 
@@ -558,32 +545,23 @@ def create_indicator_chart(data: pd.DataFrame) -> go.Figure:
     return figure
 
 
-# ---------------------------------------------------------------------------
-# AI assistant
-# ---------------------------------------------------------------------------
-
-def build_market_context(
-    ticker: str,
-    data: pd.DataFrame,
-) -> str:
+def build_market_context(ticker: str, data: pd.DataFrame) -> str:
     latest = data.iloc[-1]
     previous = data.iloc[-2] if len(data) > 1 else latest
-
     change = latest["Close"] - previous["Close"]
-    change_percent = (change / previous["Close"]) * 100
-
+    change_percent = change / previous["Close"] * 100
     support, resistance = find_support_resistance(data)
     alerts = build_alert_queue(data)
 
     return f"""
 Ticker: {ticker}
-Latest close: {latest["Close"]:.2f}
-Daily change: {change:.2f} ({change_percent:.2f}%)
-RSI: {latest["RSI"]:.2f if pd.notna(latest["RSI"]) else "N/A"}
-MACD: {latest["MACD"]:.2f if pd.notna(latest["MACD"]) else "N/A"}
-MACD signal: {latest["MACD_Signal"]:.2f if pd.notna(latest["MACD_Signal"]) else "N/A"}
-SMA 20: {latest["SMA_20"]:.2f if pd.notna(latest["SMA_20"]) else "N/A"}
-SMA 50: {latest["SMA_50"]:.2f if pd.notna(latest["SMA_50"]) else "N/A"}
+Latest close: {money(latest["Close"])}
+Daily change: {money(change)} ({change_percent:.2f}%)
+RSI: {number(latest["RSI"])}
+MACD: {number(latest["MACD"])}
+MACD signal: {number(latest["MACD_Signal"])}
+SMA 20: {number(latest["SMA_20"])}
+SMA 50: {number(latest["SMA_50"])}
 Support levels: {[round(x, 2) for x in support] or "Unavailable"}
 Resistance levels: {[round(x, 2) for x in resistance] or "Unavailable"}
 Alerts: {[message for _, message in alerts] or "None"}
@@ -600,22 +578,23 @@ def ask_ai_assistant(
 
     if is_placeholder(api_key):
         return (
-            "AI Assistant is not configured yet. Add a real "
-            "`OPENROUTER_API_KEY` to Streamlit Secrets."
+            "AI Assistant is not configured. Set the environment variable "
+            "`OPENROUTER_API_KEY` or add it to Streamlit Secrets."
         )
 
     context = build_market_context(ticker, data)
 
-    system_prompt = """
-You are Tradesphere AI, a careful educational market-analysis assistant.
-Use the supplied dashboard data when answering.
-Explain technical indicators clearly.
-Never claim certainty, guarantee profits, or provide personalized financial advice.
-Mention that users should verify information independently when appropriate.
-Keep answers practical and concise.
-""".strip()
-
-    messages = [{"role": "system", "content": system_prompt}]
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are Tradesphere AI, an educational market-analysis "
+                "assistant. Use the supplied data, explain indicators clearly, "
+                "never guarantee profits, and do not provide personalized "
+                "financial advice. Keep responses practical and concise."
+            ),
+        }
+    ]
 
     for message in st.session_state.ai_messages[-8:]:
         messages.append(
@@ -657,17 +636,22 @@ Keep answers practical and concise.
 
     if not response.ok:
         try:
-            error_message = response.json().get("error", {}).get(
+            error = response.json().get("error", {}).get(
                 "message",
                 response.text,
             )
         except Exception:
-            error_message = response.text
+            error = response.text
 
-        raise RuntimeError(f"AI request failed: {error_message}")
+        raise RuntimeError(f"OpenRouter request failed: {error}")
 
     result = response.json()
-    return result["choices"][0]["message"]["content"]
+    choices = result.get("choices", [])
+
+    if not choices:
+        raise RuntimeError("OpenRouter returned no response choices.")
+
+    return choices[0]["message"]["content"]
 
 
 def show_ai_assistant(ticker: str, data: pd.DataFrame) -> None:
@@ -675,8 +659,7 @@ def show_ai_assistant(ticker: str, data: pd.DataFrame) -> None:
         """
         <div class="ai-card">
             <strong>🤖 Tradesphere AI Assistant</strong><br>
-            Ask questions about the selected ticker, indicators, trends,
-            support, resistance, or dashboard alerts.
+            Ask about trends, indicators, alerts, support, resistance, or risk.
         </div>
         """,
         unsafe_allow_html=True,
@@ -690,9 +673,7 @@ def show_ai_assistant(ticker: str, data: pd.DataFrame) -> None:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    question = st.chat_input(
-        f"Ask Tradesphere AI about {ticker}..."
-    )
+    question = st.chat_input(f"Ask Tradesphere AI about {ticker}...")
 
     if question:
         st.session_state.ai_messages.append(
@@ -715,10 +696,6 @@ def show_ai_assistant(ticker: str, data: pd.DataFrame) -> None:
             {"role": "assistant", "content": answer}
         )
 
-
-# ---------------------------------------------------------------------------
-# Sidebar
-# ---------------------------------------------------------------------------
 
 with st.sidebar:
     st.markdown(
@@ -777,18 +754,12 @@ with st.sidebar:
         st.rerun()
 
 
-# ---------------------------------------------------------------------------
-# Load data
-# ---------------------------------------------------------------------------
-
 if run_analysis or "market_data" not in st.session_state:
     with st.spinner(f"Loading {ticker} market data..."):
         raw_data = load_market_data(ticker, period, interval)
 
     if raw_data.empty:
-        st.error(
-            "No market data found. Check the ticker and selected interval."
-        )
+        st.error("No market data found. Check the ticker or interval.")
         st.stop()
 
     st.session_state.market_data = calculate_indicators(raw_data)
@@ -800,12 +771,8 @@ latest = data.iloc[-1]
 previous = data.iloc[-2] if len(data) > 1 else latest
 
 price_change = latest["Close"] - previous["Close"]
-percent_change = (price_change / previous["Close"]) * 100
+percent_change = price_change / previous["Close"] * 100
 
-
-# ---------------------------------------------------------------------------
-# Dashboard
-# ---------------------------------------------------------------------------
 
 header_left, header_right = st.columns([4, 1])
 
@@ -852,26 +819,15 @@ metric_1, metric_2, metric_3, metric_4 = st.columns(4)
 
 metric_1.metric(
     "Latest Price",
-    f"${latest['Close']:.2f}",
+    money(latest["Close"]),
     f"{price_change:.2f} ({percent_change:.2f}%)",
 )
 
-metric_2.metric(
-    "RSI",
-    "N/A" if pd.isna(latest["RSI"]) else f"{latest['RSI']:.2f}",
-)
+metric_2.metric("RSI", number(latest["RSI"]))
+metric_3.metric("MACD", number(latest["MACD"]))
+metric_4.metric("Volume", f"{latest['Volume']:,.0f}")
 
-metric_3.metric(
-    "MACD",
-    "N/A" if pd.isna(latest["MACD"]) else f"{latest['MACD']:.2f}",
-)
-
-metric_4.metric(
-    "Volume",
-    f"{latest['Volume']:,.0f}",
-)
-
-overview_tab, technical_tab, ai_tab, sentiment_tab = st.tabs(
+overview_tab, technical_tab, ai_tab, news_tab = st.tabs(
     [
         "📊 Overview",
         "🧭 Technical Signals",
@@ -955,10 +911,9 @@ with technical_tab:
     ]
 
     st.dataframe(
-        data[technical_columns]
-        .tail(20)
-        .sort_index(ascending=False)
-        .round(2),
+        data[technical_columns].tail(20).sort_index(
+            ascending=False
+        ).round(2),
         use_container_width=True,
         height=420,
     )
@@ -968,7 +923,7 @@ with ai_tab:
     show_ai_assistant(active_ticker, data)
 
 
-with sentiment_tab:
+with news_tab:
     st.markdown(
         '<div class="section-title">News Intelligence</div>',
         unsafe_allow_html=True,
@@ -978,43 +933,40 @@ with sentiment_tab:
 
     if is_placeholder(news_api_key):
         st.info(
-            "News intelligence is disabled. Add NEWS_API_KEY to Streamlit "
-            "Secrets to enable it."
+            "News intelligence is disabled. Add NEWS_API_KEY to Secrets "
+            "to enable it."
         )
-    else:
-        if st.button("🔎 Analyze latest news", type="primary"):
-            try:
-                response = requests.get(
-                    "https://newsapi.org/v2/everything",
-                    params={
-                        "q": active_ticker,
-                        "language": "en",
-                        "sortBy": "publishedAt",
-                        "pageSize": 5,
-                        "apiKey": news_api_key,
-                    },
-                    timeout=20,
-                )
-                response.raise_for_status()
-                articles = response.json().get("articles", [])
+    elif st.button("🔎 Load latest news", type="primary"):
+        try:
+            response = requests.get(
+                "https://newsapi.org/v2/everything",
+                params={
+                    "q": active_ticker,
+                    "language": "en",
+                    "sortBy": "publishedAt",
+                    "pageSize": 5,
+                    "apiKey": news_api_key,
+                },
+                timeout=20,
+            )
+            response.raise_for_status()
+            articles = response.json().get("articles", [])
 
-                if not articles:
-                    st.info("No recent news was found.")
-                else:
-                    for article in articles:
-                        title = article.get("title", "Untitled article")
-                        url = article.get("url", "#")
-                        source = article.get("source", {}).get(
-                            "name",
-                            "Unknown source",
-                        )
-                        st.markdown(
-                            f"- [{title}]({url}) — *{source}*"
-                        )
-            except Exception as error:
-                st.error(f"News request failed: {error}")
-        else:
-            st.info("Click the button to load recent news.")
+            if not articles:
+                st.info("No recent news was found.")
+            else:
+                for article in articles:
+                    title = article.get("title", "Untitled article")
+                    url = article.get("url", "#")
+                    source = article.get("source", {}).get(
+                        "name",
+                        "Unknown source",
+                    )
+                    st.markdown(f"- [{title}]({url}) — *{source}*")
+        except Exception as error:
+            st.error(f"News request failed: {error}")
+    else:
+        st.info("Click the button to load recent news.")
 
 
 st.markdown(
