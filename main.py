@@ -11,7 +11,7 @@ import yfinance as yf
 
 
 st.set_page_config(
-    page_title="Tradesphere | Market Intelligence",
+    page_title="Tradesphere | AI Market Intelligence",
     page_icon="🔷",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -19,15 +19,15 @@ st.set_page_config(
 
 
 # ---------------------------------------------------------------------------
-# Configuration and authentication
+# Configuration
 # ---------------------------------------------------------------------------
 
 DEFAULT_USERNAME = "tsadmin"
 DEFAULT_PASSWORD = "TS2026!"
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 
 def get_config(name: str, default: str = "") -> str:
-    """Read a configuration value from Streamlit Secrets or environment."""
     try:
         value = st.secrets.get(name, "")
         if value is not None and str(value).strip():
@@ -43,7 +43,12 @@ def is_placeholder(value: str) -> bool:
     return (
         not value
         or value.startswith("your-")
-        or value in {"change-this-password", "your-real-password"}
+        or value.startswith("your_")
+        or value in {
+            "change-this-password",
+            "your-real-password",
+            "replace-me",
+        }
     )
 
 
@@ -64,168 +69,9 @@ def authenticate_user(username: str, password: str) -> bool:
     configured_username, configured_password = get_login_credentials()
 
     return (
-        username.strip().lower() == configured_username.strip().lower()
+        username.strip().lower() == configured_username.lower()
         and password == configured_password
     )
-
-
-def show_login_page() -> None:
-    st.markdown(
-        """
-        <style>
-        .stApp {
-            background:
-                radial-gradient(circle at 15% 20%, #172554 0%, transparent 32%),
-                radial-gradient(circle at 85% 80%, #064e3b 0%, transparent 28%),
-                #060b16;
-        }
-
-        [data-testid="stHeader"],
-        [data-testid="stToolbar"] {
-            background: transparent;
-        }
-
-        .login-shell {
-            max-width: 460px;
-            margin: 7vh auto 20px auto;
-            padding: 38px;
-            border: 1px solid rgba(148, 163, 184, 0.2);
-            border-radius: 28px;
-            background: rgba(15, 23, 42, 0.82);
-            box-shadow: 0 25px 80px rgba(0, 0, 0, 0.45);
-            backdrop-filter: blur(18px);
-            text-align: center;
-        }
-
-        .ts-logo {
-            width: 82px;
-            height: 82px;
-            margin: 0 auto 18px auto;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 24px;
-            color: white;
-            font-size: 30px;
-            font-weight: 900;
-            letter-spacing: -2px;
-            background: linear-gradient(135deg, #2563eb, #14b8a6);
-            box-shadow: 0 12px 30px rgba(20, 184, 166, 0.28);
-        }
-
-        .login-title {
-            color: #f8fafc;
-            font-size: 2rem;
-            font-weight: 800;
-            margin-bottom: 6px;
-        }
-
-        .login-subtitle {
-            color: #94a3b8;
-            margin-bottom: 25px;
-        }
-
-        .login-footer {
-            color: #64748b;
-            font-size: 0.78rem;
-            margin-top: 20px;
-            text-align: center;
-        }
-
-        .demo-credentials {
-            max-width: 460px;
-            margin: 0 auto;
-            padding: 14px 18px;
-            border: 1px solid rgba(56, 189, 248, 0.25);
-            border-radius: 14px;
-            background: rgba(14, 116, 144, 0.12);
-            color: #bae6fd;
-            text-align: center;
-            font-size: 0.85rem;
-        }
-
-        div[data-testid="stForm"] {
-            border: 0;
-            padding: 0;
-        }
-        </style>
-
-        <div class="login-shell">
-            <div class="ts-logo">TS</div>
-            <div class="login-title">Welcome to Tradesphere</div>
-            <div class="login-subtitle">
-                Intelligent market insights for modern investors
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    configured_username, configured_password = get_login_credentials()
-
-    left, center, right = st.columns([1, 2, 1])
-
-    with center:
-        with st.form("login_form", clear_on_submit=False):
-            username = st.text_input(
-                "Username",
-                value="",
-                placeholder="Enter username",
-                autocomplete="username",
-            )
-
-            password = st.text_input(
-                "Password",
-                value="",
-                type="password",
-                placeholder="Enter password",
-                autocomplete="current-password",
-            )
-
-            submitted = st.form_submit_button(
-                "🔐 Access Dashboard",
-                type="primary",
-                use_container_width=True,
-            )
-
-        if submitted:
-            if authenticate_user(username, password):
-                st.session_state.authenticated = True
-                st.session_state.username = username.strip()
-                st.session_state.login_error = ""
-                st.rerun()
-            else:
-                st.session_state.login_error = (
-                    "Invalid login details. Check the username and password below."
-                )
-
-        if st.session_state.get("login_error"):
-            st.error(st.session_state.login_error)
-
-        st.markdown(
-            f"""
-            <div class="demo-credentials">
-                <strong>Login credentials</strong><br>
-                Username: <code>{configured_username}</code><br>
-                Password: <code>{configured_password}</code>
-            </div>
-            <div class="login-footer">
-                TS Secure Access · Educational analytics platform
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
-
-if "login_error" not in st.session_state:
-    st.session_state.login_error = ""
-
-if not st.session_state.authenticated:
-    show_login_page()
-    st.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -237,19 +83,69 @@ st.markdown(
     <style>
     .stApp {
         background:
-            radial-gradient(circle at 0% 0%, rgba(30, 64, 175, 0.16), transparent 26%),
-            radial-gradient(circle at 100% 100%, rgba(13, 148, 136, 0.12), transparent 25%),
+            radial-gradient(circle at 0% 0%, rgba(37,99,235,.18), transparent 28%),
+            radial-gradient(circle at 100% 100%, rgba(20,184,166,.12), transparent 25%),
             #070d19;
         color: #e2e8f0;
     }
 
     [data-testid="stHeader"] {
-        background: rgba(7, 13, 25, 0.88);
+        background: rgba(7,13,25,.85);
     }
 
     [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #0b1220, #0a1020);
-        border-right: 1px solid rgba(148, 163, 184, 0.14);
+        background: linear-gradient(180deg,#0b1220,#080f1c);
+        border-right: 1px solid rgba(148,163,184,.16);
+    }
+
+    .login-box {
+        max-width: 470px;
+        margin: 8vh auto 20px;
+        padding: 38px;
+        border-radius: 28px;
+        text-align: center;
+        background: rgba(15,23,42,.88);
+        border: 1px solid rgba(148,163,184,.2);
+        box-shadow: 0 25px 80px rgba(0,0,0,.45);
+    }
+
+    .ts-logo {
+        width: 82px;
+        height: 82px;
+        margin: 0 auto 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 24px;
+        color: white;
+        font-size: 30px;
+        font-weight: 900;
+        letter-spacing: -2px;
+        background: linear-gradient(135deg,#2563eb,#14b8a6);
+        box-shadow: 0 12px 30px rgba(20,184,166,.3);
+    }
+
+    .login-title {
+        color: #f8fafc;
+        font-size: 2rem;
+        font-weight: 850;
+    }
+
+    .login-subtitle {
+        color: #94a3b8;
+        margin-bottom: 25px;
+    }
+
+    .credential-box {
+        max-width: 470px;
+        margin: 15px auto;
+        padding: 14px;
+        border-radius: 14px;
+        background: rgba(14,116,144,.14);
+        border: 1px solid rgba(56,189,248,.25);
+        color: #bae6fd;
+        text-align: center;
+        font-size: .85rem;
     }
 
     .sidebar-brand {
@@ -268,7 +164,7 @@ st.markdown(
         border-radius: 14px;
         color: white;
         font-weight: 900;
-        background: linear-gradient(135deg, #2563eb, #14b8a6);
+        background: linear-gradient(135deg,#2563eb,#14b8a6);
     }
 
     .brand-name {
@@ -279,14 +175,14 @@ st.markdown(
 
     .brand-caption {
         color: #64748b;
-        font-size: 0.72rem;
+        font-size: .72rem;
     }
 
     .eyebrow {
         color: #38bdf8;
-        font-size: 0.78rem;
+        font-size: .78rem;
         font-weight: 700;
-        letter-spacing: 0.12em;
+        letter-spacing: .12em;
         text-transform: uppercase;
     }
 
@@ -294,27 +190,26 @@ st.markdown(
         color: #f8fafc;
         font-size: 2.15rem;
         font-weight: 850;
-        letter-spacing: -0.05em;
+        letter-spacing: -.05em;
     }
 
     .dashboard-subtitle {
         color: #94a3b8;
-        font-size: 0.92rem;
     }
 
     .hero {
         padding: 28px 30px;
         margin: 20px 0;
-        border: 1px solid rgba(96, 165, 250, 0.22);
+        border: 1px solid rgba(96,165,250,.22);
         border-radius: 24px;
-        background: linear-gradient(135deg, #1e40af, #0f766e);
-        box-shadow: 0 18px 45px rgba(2, 6, 23, 0.35);
+        background: linear-gradient(135deg,#1e40af,#0f766e);
+        box-shadow: 0 18px 45px rgba(2,6,23,.35);
     }
 
     .hero h1 {
         color: white;
         font-size: 2.3rem;
-        margin: 0 0 4px 0;
+        margin: 0 0 4px;
     }
 
     .hero p {
@@ -323,11 +218,11 @@ st.markdown(
     }
 
     div[data-testid="stMetric"] {
-        min-height: 122px;
+        min-height: 120px;
         padding: 20px;
-        border: 1px solid rgba(148, 163, 184, 0.14);
+        border: 1px solid rgba(148,163,184,.14);
         border-radius: 18px;
-        background: rgba(15, 23, 42, 0.72);
+        background: rgba(15,23,42,.72);
     }
 
     div[data-testid="stMetricLabel"] {
@@ -342,21 +237,32 @@ st.markdown(
         color: #f8fafc;
         font-size: 1.2rem;
         font-weight: 750;
-        margin: 20px 0 10px 0;
+        margin: 20px 0 10px;
     }
 
     .status-card {
         padding: 15px 18px;
-        border: 1px solid rgba(148, 163, 184, 0.14);
+        border: 1px solid rgba(148,163,184,.14);
         border-radius: 16px;
-        background: rgba(15, 23, 42, 0.7);
+        background: rgba(15,23,42,.7);
+    }
+
+    .ai-card {
+        padding: 18px;
+        border: 1px solid rgba(56,189,248,.24);
+        border-radius: 18px;
+        background: linear-gradient(
+            135deg,
+            rgba(30,64,175,.18),
+            rgba(15,118,110,.12)
+        );
     }
 
     .disclaimer {
         color: #64748b;
-        font-size: 0.78rem;
+        font-size: .78rem;
         text-align: center;
-        margin: 32px 0 10px 0;
+        margin: 32px 0 10px;
     }
 
     .stButton > button {
@@ -370,7 +276,83 @@ st.markdown(
 
 
 # ---------------------------------------------------------------------------
-# Market data and indicators
+# Login
+# ---------------------------------------------------------------------------
+
+def show_login_page() -> None:
+    configured_username, configured_password = get_login_credentials()
+
+    st.markdown(
+        """
+        <div class="login-box">
+            <div class="ts-logo">TS</div>
+            <div class="login-title">Welcome to Tradesphere</div>
+            <div class="login-subtitle">
+                AI-powered market intelligence for modern investors
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    with st.form("login_form"):
+        username = st.text_input(
+            "Username",
+            placeholder="Enter username",
+            autocomplete="username",
+        )
+        password = st.text_input(
+            "Password",
+            type="password",
+            placeholder="Enter password",
+            autocomplete="current-password",
+        )
+        submitted = st.form_submit_button(
+            "🔐 Access Dashboard",
+            type="primary",
+            use_container_width=True,
+        )
+
+    if submitted:
+        if authenticate_user(username, password):
+            st.session_state.authenticated = True
+            st.session_state.username = username.strip()
+            st.session_state.login_error = ""
+            st.rerun()
+        else:
+            st.session_state.login_error = "Invalid username or password."
+
+    if st.session_state.get("login_error"):
+        st.error(st.session_state.login_error)
+
+    st.markdown(
+        f"""
+        <div class="credential-box">
+            <strong>Current login credentials</strong><br>
+            Username: <code>{configured_username}</code><br>
+            Password: <code>{configured_password}</code>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if "login_error" not in st.session_state:
+    st.session_state.login_error = ""
+
+if "ai_messages" not in st.session_state:
+    st.session_state.ai_messages = []
+
+if not st.session_state.authenticated:
+    show_login_page()
+    st.stop()
+
+
+# ---------------------------------------------------------------------------
+# Market data
 # ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=300)
@@ -408,19 +390,19 @@ def calculate_indicators(data: pd.DataFrame) -> pd.DataFrame:
     delta = close.diff()
     gain = delta.clip(lower=0).rolling(14).mean()
     loss = -delta.clip(upper=0).rolling(14).mean()
-    relative_strength = gain / loss.replace(0, np.nan)
-    result["RSI"] = 100 - (100 / (1 + relative_strength))
+    rs = gain / loss.replace(0, np.nan)
+    result["RSI"] = 100 - (100 / (1 + rs))
 
     ema_12 = close.ewm(span=12, adjust=False).mean()
     ema_26 = close.ewm(span=26, adjust=False).mean()
     result["MACD"] = ema_12 - ema_26
     result["MACD_Signal"] = result["MACD"].ewm(span=9, adjust=False).mean()
 
-    middle_band = close.rolling(20).mean()
-    standard_deviation = close.rolling(20).std()
-    result["BB_Middle"] = middle_band
-    result["BB_Upper"] = middle_band + 2 * standard_deviation
-    result["BB_Lower"] = middle_band - 2 * standard_deviation
+    middle = close.rolling(20).mean()
+    deviation = close.rolling(20).std()
+    result["BB_Middle"] = middle
+    result["BB_Upper"] = middle + 2 * deviation
+    result["BB_Lower"] = middle - 2 * deviation
 
     return result
 
@@ -438,10 +420,13 @@ def find_support_resistance(
     resistances = []
 
     for index in range(window, len(data) - window):
-        if lows[index] == np.min(lows[index - window:index + window + 1]):
+        low_window = lows[index - window:index + window + 1]
+        high_window = highs[index - window:index + window + 1]
+
+        if lows[index] == np.min(low_window):
             supports.append(float(lows[index]))
 
-        if highs[index] == np.max(highs[index - window:index + window + 1]):
+        if highs[index] == np.max(high_window):
             resistances.append(float(highs[index]))
 
     return supports[-5:], resistances[-5:]
@@ -484,18 +469,18 @@ def build_alert_queue(data: pd.DataFrame) -> list[tuple[int, str]]:
         heapq.heappush(alerts, (3, "Price is below the lower Bollinger Band"))
 
     if pd.notna(latest["SMA_20"]) and pd.notna(latest["SMA_50"]):
-        message = (
+        trend = (
             "Short-term trend is above the long-term trend"
             if latest["SMA_20"] > latest["SMA_50"]
             else "Short-term trend is below the long-term trend"
         )
-        heapq.heappush(alerts, (4, message))
+        heapq.heappush(alerts, (4, trend))
 
     return alerts
 
 
 # ---------------------------------------------------------------------------
-# Charts and optional integrations
+# Charts
 # ---------------------------------------------------------------------------
 
 def create_price_chart(data: pd.DataFrame) -> go.Figure:
@@ -533,7 +518,7 @@ def create_price_chart(data: pd.DataFrame) -> go.Figure:
         height=560,
         template="plotly_dark",
         paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(15,23,42,0.6)",
+        plot_bgcolor="rgba(15,23,42,.6)",
         xaxis_rangeslider_visible=False,
         hovermode="x unified",
         margin={"l": 10, "r": 10, "t": 30, "b": 10},
@@ -553,7 +538,7 @@ def create_indicator_chart(data: pd.DataFrame) -> go.Figure:
             name="RSI",
             line={"color": "#22c55e", "width": 2},
             fill="tozeroy",
-            fillcolor="rgba(34,197,94,0.08)",
+            fillcolor="rgba(34,197,94,.08)",
         )
     )
 
@@ -564,7 +549,7 @@ def create_indicator_chart(data: pd.DataFrame) -> go.Figure:
         height=280,
         template="plotly_dark",
         paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(15,23,42,0.6)",
+        plot_bgcolor="rgba(15,23,42,.6)",
         yaxis_title="RSI",
         yaxis_range=[0, 100],
         margin={"l": 10, "r": 10, "t": 20, "b": 10},
@@ -573,130 +558,166 @@ def create_indicator_chart(data: pd.DataFrame) -> go.Figure:
     return figure
 
 
-def get_news_sentiment(ticker: str) -> dict[str, Any]:
-    news_api_key = get_config("NEWS_API_KEY")
-    openai_api_key = get_config("OPENAI_API_KEY")
-    openai_model = get_config("OPENAI_MODEL", "gpt-4o-mini")
+# ---------------------------------------------------------------------------
+# AI assistant
+# ---------------------------------------------------------------------------
 
-    if is_placeholder(news_api_key):
-        return {
-            "score": 0.0,
-            "label": "Unavailable",
-            "summary": "Configure a real NEWS_API_KEY to enable news sentiment.",
-            "articles": [],
-        }
+def build_market_context(
+    ticker: str,
+    data: pd.DataFrame,
+) -> str:
+    latest = data.iloc[-1]
+    previous = data.iloc[-2] if len(data) > 1 else latest
 
-    response = requests.get(
-        "https://newsapi.org/v2/everything",
-        params={
-            "q": ticker,
-            "language": "en",
-            "sortBy": "publishedAt",
-            "pageSize": 5,
-            "apiKey": news_api_key,
-        },
-        timeout=15,
-    )
-    response.raise_for_status()
+    change = latest["Close"] - previous["Close"]
+    change_percent = (change / previous["Close"]) * 100
 
-    articles = response.json().get("articles", [])
-    headlines = [
-        article.get("title", "")
-        for article in articles
-        if article.get("title")
-    ]
+    support, resistance = find_support_resistance(data)
+    alerts = build_alert_queue(data)
 
-    if not headlines:
-        return {
-            "score": 0.0,
-            "label": "Neutral",
-            "summary": "No recent news was found.",
-            "articles": [],
-        }
+    return f"""
+Ticker: {ticker}
+Latest close: {latest["Close"]:.2f}
+Daily change: {change:.2f} ({change_percent:.2f}%)
+RSI: {latest["RSI"]:.2f if pd.notna(latest["RSI"]) else "N/A"}
+MACD: {latest["MACD"]:.2f if pd.notna(latest["MACD"]) else "N/A"}
+MACD signal: {latest["MACD_Signal"]:.2f if pd.notna(latest["MACD_Signal"]) else "N/A"}
+SMA 20: {latest["SMA_20"]:.2f if pd.notna(latest["SMA_20"]) else "N/A"}
+SMA 50: {latest["SMA_50"]:.2f if pd.notna(latest["SMA_50"]) else "N/A"}
+Support levels: {[round(x, 2) for x in support] or "Unavailable"}
+Resistance levels: {[round(x, 2) for x in resistance] or "Unavailable"}
+Alerts: {[message for _, message in alerts] or "None"}
+""".strip()
 
-    if not is_placeholder(openai_api_key):
-        try:
-            from openai import OpenAI
 
-            client = OpenAI(api_key=openai_api_key)
-            prompt = (
-                f"Analyze these headlines for {ticker}. Return a concise summary "
-                "and classify the sentiment as Positive, Neutral, or Negative.\n\n"
-                + "\n".join(f"- {headline}" for headline in headlines)
-            )
+def ask_ai_assistant(
+    question: str,
+    ticker: str,
+    data: pd.DataFrame,
+) -> str:
+    api_key = get_config("OPENROUTER_API_KEY")
+    model = get_config("OPENROUTER_MODEL", "openai/gpt-4o-mini")
 
-            completion = client.chat.completions.create(
-                model=openai_model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a cautious financial news analyst.",
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.2,
-            )
+    if is_placeholder(api_key):
+        return (
+            "AI Assistant is not configured yet. Add a real "
+            "`OPENROUTER_API_KEY` to Streamlit Secrets."
+        )
 
-            return {
-                "score": 0.0,
-                "label": "AI analyzed",
-                "summary": completion.choices[0].message.content,
-                "articles": articles,
+    context = build_market_context(ticker, data)
+
+    system_prompt = """
+You are Tradesphere AI, a careful educational market-analysis assistant.
+Use the supplied dashboard data when answering.
+Explain technical indicators clearly.
+Never claim certainty, guarantee profits, or provide personalized financial advice.
+Mention that users should verify information independently when appropriate.
+Keep answers practical and concise.
+""".strip()
+
+    messages = [{"role": "system", "content": system_prompt}]
+
+    for message in st.session_state.ai_messages[-8:]:
+        messages.append(
+            {
+                "role": message["role"],
+                "content": message["content"],
             }
+        )
+
+    messages.append(
+        {
+            "role": "user",
+            "content": (
+                f"Current market context:\n{context}\n\n"
+                f"User question:\n{question}"
+            ),
+        }
+    )
+
+    response = requests.post(
+        OPENROUTER_URL,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": get_config(
+                "APP_URL",
+                "https://tradesphere.streamlit.app",
+            ),
+            "X-Title": "Tradesphere AI",
+        },
+        json={
+            "model": model,
+            "messages": messages,
+            "temperature": 0.2,
+            "max_tokens": 700,
+        },
+        timeout=60,
+    )
+
+    if not response.ok:
+        try:
+            error_message = response.json().get("error", {}).get(
+                "message",
+                response.text,
+            )
         except Exception:
-            pass
+            error_message = response.text
 
-    positive_words = (
-        "growth", "beat", "surge", "profit", "upgrade", "strong", "gain"
-    )
-    negative_words = (
-        "loss", "fall", "drop", "downgrade", "weak", "lawsuit", "decline"
-    )
+        raise RuntimeError(f"AI request failed: {error_message}")
 
-    positive_count = sum(
-        any(word in headline.lower() for word in positive_words)
-        for headline in headlines
-    )
-    negative_count = sum(
-        any(word in headline.lower() for word in negative_words)
-        for headline in headlines
-    )
-
-    score = (positive_count - negative_count) / max(len(headlines), 1)
-    label = "Positive" if score > 0.15 else "Negative" if score < -0.15 else "Neutral"
-
-    return {
-        "score": round(score, 2),
-        "label": label,
-        "summary": f"Rule-based sentiment: {label}.",
-        "articles": articles,
-    }
+    result = response.json()
+    return result["choices"][0]["message"]["content"]
 
 
-def create_checkout_url() -> str | None:
-    secret_key = get_config("STRIPE_SECRET_KEY")
-    price_id = get_config("STRIPE_PRICE_ID")
-    app_url = get_config("APP_URL", "http://localhost:8501")
-
-    if is_placeholder(secret_key) or is_placeholder(price_id):
-        return None
-
-    import stripe
-
-    stripe.api_key = secret_key
-
-    session = stripe.checkout.Session.create(
-        mode="subscription",
-        line_items=[{"price": price_id, "quantity": 1}],
-        success_url=f"{app_url}/?payment=success",
-        cancel_url=f"{app_url}/?payment=cancelled",
+def show_ai_assistant(ticker: str, data: pd.DataFrame) -> None:
+    st.markdown(
+        """
+        <div class="ai-card">
+            <strong>🤖 Tradesphere AI Assistant</strong><br>
+            Ask questions about the selected ticker, indicators, trends,
+            support, resistance, or dashboard alerts.
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
-    return session.url
+    if st.button("🧹 Clear AI conversation"):
+        st.session_state.ai_messages = []
+        st.rerun()
+
+    for message in st.session_state.ai_messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    question = st.chat_input(
+        f"Ask Tradesphere AI about {ticker}..."
+    )
+
+    if question:
+        st.session_state.ai_messages.append(
+            {"role": "user", "content": question}
+        )
+
+        with st.chat_message("user"):
+            st.markdown(question)
+
+        with st.chat_message("assistant"):
+            with st.spinner("Tradesphere AI is analyzing the dashboard..."):
+                try:
+                    answer = ask_ai_assistant(question, ticker, data)
+                except Exception as error:
+                    answer = f"AI Assistant error: {error}"
+
+            st.markdown(answer)
+
+        st.session_state.ai_messages.append(
+            {"role": "assistant", "content": answer}
+        )
 
 
 # ---------------------------------------------------------------------------
-# Sidebar and controls
+# Sidebar
 # ---------------------------------------------------------------------------
 
 with st.sidebar:
@@ -706,14 +727,16 @@ with st.sidebar:
             <div class="mini-logo">TS</div>
             <div>
                 <div class="brand-name">Tradesphere</div>
-                <div class="brand-caption">Market intelligence</div>
+                <div class="brand-caption">AI market intelligence</div>
             </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    st.caption(f"Signed in as **{st.session_state.get('username', 'User')}**")
+    st.caption(
+        f"Signed in as **{st.session_state.get('username', 'User')}**"
+    )
 
     ticker = st.text_input(
         "Ticker symbol",
@@ -746,33 +769,16 @@ with st.sidebar:
 
     st.divider()
 
-    st.markdown("### ⚡ Premium Access")
-
-    if st.button("Subscribe with Stripe", use_container_width=True):
-        try:
-            checkout_url = create_checkout_url()
-
-            if checkout_url:
-                st.markdown(f"[Continue to secure checkout]({checkout_url})")
-            else:
-                st.warning(
-                    "Configure STRIPE_SECRET_KEY and STRIPE_PRICE_ID "
-                    "to enable checkout."
-                )
-        except Exception as error:
-            st.error(f"Payment setup error: {error}")
-
-    st.divider()
-
     if st.button("🚪 Logout", use_container_width=True):
         st.session_state.authenticated = False
+        st.session_state.ai_messages = []
         st.session_state.pop("market_data", None)
         st.session_state.pop("username", None)
         st.rerun()
 
 
 # ---------------------------------------------------------------------------
-# Load market data
+# Load data
 # ---------------------------------------------------------------------------
 
 if run_analysis or "market_data" not in st.session_state:
@@ -780,7 +786,9 @@ if run_analysis or "market_data" not in st.session_state:
         raw_data = load_market_data(ticker, period, interval)
 
     if raw_data.empty:
-        st.error("No market data found. Check the ticker and selected interval.")
+        st.error(
+            "No market data found. Check the ticker and selected interval."
+        )
         st.stop()
 
     st.session_state.market_data = calculate_indicators(raw_data)
@@ -789,32 +797,42 @@ if run_analysis or "market_data" not in st.session_state:
 data = st.session_state.market_data
 active_ticker = st.session_state.analysis_ticker
 latest = data.iloc[-1]
+previous = data.iloc[-2] if len(data) > 1 else latest
 
-previous_close = data["Close"].iloc[-2] if len(data) > 1 else latest["Close"]
-price_change = latest["Close"] - previous_close
-percent_change = (price_change / previous_close) * 100
+price_change = latest["Close"] - previous["Close"]
+percent_change = (price_change / previous["Close"]) * 100
 
 
 # ---------------------------------------------------------------------------
 # Dashboard
 # ---------------------------------------------------------------------------
 
-left_header, right_header = st.columns([4, 1])
+header_left, header_right = st.columns([4, 1])
 
-with left_header:
-    st.markdown('<div class="eyebrow">Live workspace</div>', unsafe_allow_html=True)
+with header_left:
+    st.markdown(
+        '<div class="eyebrow">Live workspace</div>',
+        unsafe_allow_html=True,
+    )
     st.markdown(
         '<div class="dashboard-title">Market Command Center</div>',
         unsafe_allow_html=True,
     )
     st.markdown(
-        '<div class="dashboard-subtitle">Analytics, signals and sentiment in one place</div>',
+        '<div class="dashboard-subtitle">'
+        "Analytics, signals and AI assistance in one place"
+        "</div>",
         unsafe_allow_html=True,
     )
 
-with right_header:
+with header_right:
     st.markdown(
-        '<div class="status-card">🟢 Data engine online<br><small>Yahoo Finance</small></div>',
+        """
+        <div class="status-card">
+            🟢 Data engine online<br>
+            <small>Yahoo Finance</small>
+        </div>
+        """,
         unsafe_allow_html=True,
     )
 
@@ -822,7 +840,7 @@ st.markdown(
     f"""
     <div class="hero">
         <h1>TS · {active_ticker}</h1>
-        <p>Technical intelligence and market context for your selected asset.</p>
+        <p>Technical intelligence and AI market context for your selected asset.</p>
     </div>
     """,
     unsafe_allow_html=True,
@@ -853,12 +871,21 @@ metric_4.metric(
     f"{latest['Volume']:,.0f}",
 )
 
-overview_tab, technical_tab, sentiment_tab = st.tabs(
-    ["📊 Overview", "🧭 Technical Signals", "📰 News Intelligence"]
+overview_tab, technical_tab, ai_tab, sentiment_tab = st.tabs(
+    [
+        "📊 Overview",
+        "🧭 Technical Signals",
+        "🤖 AI Assistant",
+        "📰 News Intelligence",
+    ]
 )
 
+
 with overview_tab:
-    st.markdown('<div class="section-title">Price Overview</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="section-title">Price Overview</div>',
+        unsafe_allow_html=True,
+    )
 
     st.plotly_chart(
         create_price_chart(data),
@@ -876,11 +903,13 @@ with overview_tab:
         )
         st.write(
             "🟢 Support levels:",
-            [round(level, 2) for level in support_levels] or "Not enough data",
+            [round(level, 2) for level in support_levels]
+            or "Not enough data",
         )
         st.write(
             "🔴 Resistance levels:",
-            [round(level, 2) for level in resistance_levels] or "Not enough data",
+            [round(level, 2) for level in resistance_levels]
+            or "Not enough data",
         )
 
     with right_column:
@@ -901,6 +930,7 @@ with overview_tab:
                     st.info(f"Priority {priority}: {alert}")
         else:
             st.success("No alerts detected.")
+
 
 with technical_tab:
     st.markdown(
@@ -925,48 +955,73 @@ with technical_tab:
     ]
 
     st.dataframe(
-        data[technical_columns].tail(20).sort_index(ascending=False).round(2),
+        data[technical_columns]
+        .tail(20)
+        .sort_index(ascending=False)
+        .round(2),
         use_container_width=True,
         height=420,
     )
 
+
+with ai_tab:
+    show_ai_assistant(active_ticker, data)
+
+
 with sentiment_tab:
     st.markdown(
-        '<div class="section-title">AI and News Sentiment</div>',
+        '<div class="section-title">News Intelligence</div>',
         unsafe_allow_html=True,
     )
 
-    if st.button("🔎 Analyze news sentiment", type="primary"):
-        try:
-            with st.spinner("Analyzing recent news..."):
-                sentiment = get_news_sentiment(active_ticker)
+    news_api_key = get_config("NEWS_API_KEY")
 
-            sentiment_col_1, sentiment_col_2 = st.columns(2)
-            sentiment_col_1.metric("Sentiment Score", sentiment["score"])
-            sentiment_col_2.metric("Sentiment Label", sentiment["label"])
-            st.info(sentiment["summary"])
-
-            if sentiment["articles"]:
-                st.markdown("### Latest headlines")
-
-                for article in sentiment["articles"]:
-                    title = article.get("title", "Untitled article")
-                    url = article.get("url", "#")
-                    source = article.get("source", {}).get("name", "Unknown source")
-                    st.markdown(f"- [{title}]({url}) — *{source}*")
-            else:
-                st.info("No articles available.")
-
-        except Exception as error:
-            st.error(f"Sentiment request failed: {error}")
+    if is_placeholder(news_api_key):
+        st.info(
+            "News intelligence is disabled. Add NEWS_API_KEY to Streamlit "
+            "Secrets to enable it."
+        )
     else:
-        st.info("Click the button to analyze recent news for this ticker.")
+        if st.button("🔎 Analyze latest news", type="primary"):
+            try:
+                response = requests.get(
+                    "https://newsapi.org/v2/everything",
+                    params={
+                        "q": active_ticker,
+                        "language": "en",
+                        "sortBy": "publishedAt",
+                        "pageSize": 5,
+                        "apiKey": news_api_key,
+                    },
+                    timeout=20,
+                )
+                response.raise_for_status()
+                articles = response.json().get("articles", [])
+
+                if not articles:
+                    st.info("No recent news was found.")
+                else:
+                    for article in articles:
+                        title = article.get("title", "Untitled article")
+                        url = article.get("url", "#")
+                        source = article.get("source", {}).get(
+                            "name",
+                            "Unknown source",
+                        )
+                        st.markdown(
+                            f"- [{title}]({url}) — *{source}*"
+                        )
+            except Exception as error:
+                st.error(f"News request failed: {error}")
+        else:
+            st.info("Click the button to load recent news.")
+
 
 st.markdown(
     """
     <div class="disclaimer">
         TS Tradesphere · Data source: Yahoo Finance · Market data may be delayed.
-        This application is for educational purposes only and is not financial advice.
+        AI responses are educational and are not financial advice.
     </div>
     """,
     unsafe_allow_html=True,
