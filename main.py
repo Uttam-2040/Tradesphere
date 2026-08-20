@@ -20,6 +20,7 @@ st.set_page_config(
 DEFAULT_USERNAME = "tsadmin"
 DEFAULT_PASSWORD = "TS2026!"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+DEFAULT_MODEL = "liquid/lfm-2.5-2.6b:free"
 
 
 def get_config(name: str, default: str = "") -> str:
@@ -34,15 +35,21 @@ def get_config(name: str, default: str = "") -> str:
 
 
 def is_placeholder(value: str) -> bool:
-    value = value.strip().lower()
+    value = str(value).strip().lower()
+
     return (
         not value
         or value.startswith("your-")
         or value.startswith("your_")
+        or value.startswith("<")
+        or value.endswith(">")
         or value in {
             "change-this-password",
             "your-real-password",
             "replace-me",
+            "your-real-openrouter-key",
+            "sk-or-v1-your-real-key",
+            "openrouter_api_key",
         }
     )
 
@@ -72,12 +79,14 @@ def authenticate_user(username: str, password: str) -> bool:
 def number(value: Any, decimals: int = 2) -> str:
     if value is None or pd.isna(value):
         return "N/A"
+
     return f"{float(value):,.{decimals}f}"
 
 
 def money(value: Any) -> str:
     if value is None or pd.isna(value):
         return "N/A"
+
     return f"${float(value):,.2f}"
 
 
@@ -338,6 +347,7 @@ if "login_error" not in st.session_state:
 if "ai_messages" not in st.session_state:
     st.session_state.ai_messages = []
 
+
 if not st.session_state.authenticated:
     show_login_page()
     st.stop()
@@ -568,18 +578,31 @@ Alerts: {[message for _, message in alerts] or "None"}
 """.strip()
 
 
+def get_openrouter_key() -> str:
+    api_key = get_config("OPENROUTER_API_KEY")
+
+    if is_placeholder(api_key):
+        return ""
+
+    if not api_key.startswith("sk-or-"):
+        return ""
+
+    return api_key
+
+
 def ask_ai_assistant(
     question: str,
     ticker: str,
     data: pd.DataFrame,
 ) -> str:
-    api_key = get_config("OPENROUTER_API_KEY")
-    model = get_config("OPENROUTER_MODEL", "openai/gpt-4o-mini")
+    api_key = get_openrouter_key()
+    model = get_config("OPENROUTER_MODEL", DEFAULT_MODEL)
 
-    if is_placeholder(api_key):
-        return (
-            "AI Assistant is not configured. Set the environment variable "
-            "`OPENROUTER_API_KEY` or add it to Streamlit Secrets."
+    if not api_key:
+        raise RuntimeError(
+            "OpenRouter is not configured. Add a real "
+            "`OPENROUTER_API_KEY` beginning with `sk-or-` to Streamlit "
+            "Secrets."
         )
 
     context = build_market_context(ticker, data)
@@ -596,20 +619,28 @@ def ask_ai_assistant(
         }
     ]
 
+    # The current user message is already stored by show_ai_assistant().
+    # Preserve reasoning_details exactly for subsequent requests.
     for message in st.session_state.ai_messages[-8:]:
-        messages.append(
-            {
-                "role": message["role"],
-                "content": message["content"],
-            }
-        )
+        api_message = {
+            "role": message["role"],
+            "content": message.get("content", ""),
+        }
+
+        if (
+            message["role"] == "assistant"
+            and message.get("reasoning_details") is not None
+        ):
+            api_message["reasoning_details"] = message["reasoning_details"]
+
+        messages.append(api_message)
 
     messages.append(
         {
             "role": "user",
             "content": (
                 f"Current market context:\n{context}\n\n"
-                f"User question:\n{question}"
+                f"Please answer the user's latest question using this context."
             ),
         }
     )
@@ -628,6 +659,7 @@ def ask_ai_assistant(
         json={
             "model": model,
             "messages": messages,
+            "reasoning": {"enabled": True},
             "temperature": 0.2,
             "max_tokens": 700,
         },
@@ -651,7 +683,31 @@ def ask_ai_assistant(
     if not choices:
         raise RuntimeError("OpenRouter returned no response choices.")
 
-    return choices[0]["message"]["content"]
+    assistant_message = choices[0].get("message", {})
+    answer = assistant_message.get("content")
+
+    if isinstance(answer, list):
+        answer = "\n".join(
+            item.get("text", "")
+            for item in answer
+            if isinstance(item, dict)
+        )
+
+    if not answer:
+        raise RuntimeError("OpenRouter returned an empty response.")
+
+    # Save the complete assistant message for the next API call.
+    st.session_state.ai_messages.append(
+        {
+            "role": "assistant",
+            "content": answer,
+            "reasoning_details": assistant_message.get(
+                "reasoning_details"
+            ),
+        }
+    )
+
+    return answer
 
 
 def show_ai_assistant(ticker: str, data: pd.DataFrame) -> None:
@@ -671,13 +727,17 @@ def show_ai_assistant(ticker: str, data: pd.DataFrame) -> None:
 
     for message in st.session_state.ai_messages:
         with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+            st.markdown(message.get("content", ""))
 
     question = st.chat_input(f"Ask Tradesphere AI about {ticker}...")
 
     if question:
+        # Store the user message once. ask_ai_assistant reads it from here.
         st.session_state.ai_messages.append(
-            {"role": "user", "content": question}
+            {
+                "role": "user",
+                "content": question,
+            }
         )
 
         with st.chat_message("user"):
@@ -691,10 +751,6 @@ def show_ai_assistant(ticker: str, data: pd.DataFrame) -> None:
                     answer = f"AI Assistant error: {error}"
 
             st.markdown(answer)
-
-        st.session_state.ai_messages.append(
-            {"role": "assistant", "content": answer}
-        )
 
 
 with st.sidebar:
@@ -772,7 +828,6 @@ previous = data.iloc[-2] if len(data) > 1 else latest
 
 price_change = latest["Close"] - previous["Close"]
 percent_change = price_change / previous["Close"] * 100
-
 
 header_left, header_right = st.columns([4, 1])
 
