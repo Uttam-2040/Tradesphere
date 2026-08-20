@@ -1,33 +1,27 @@
 # 📈 Tradesphere
 
-A Streamlit-based stock analytics web application that combines technical indicators, market data visualization, algorithmic support/resistance detection, priority-based trading alerts, news sentiment analysis, LLM integration, and Stripe subscription payments.
+Tradesphere is a Streamlit-based stock analytics application that combines market data, technical indicators, support and resistance detection, priority alerts, news sentiment analysis, optional LLM analysis, and Stripe subscription checkout.
 
 > **Disclaimer:** This application is for educational purposes only and does not provide financial advice.
 
 ## Features
 
-- Stock market data powered by Yahoo Finance through `yfinance`
-- Interactive candlestick charts using Plotly
-- Technical indicators:
-  - SMA 20
-  - SMA 50
-  - EMA 20
-  - RSI
-  - MACD
-  - Bollinger Bands
+- Yahoo Finance market data through `yfinance`
+- Interactive Plotly candlestick charts
+- SMA, EMA, RSI, MACD, and Bollinger Bands
 - Support and resistance detection using a monotonic stack
-- Technical alert prioritization using a priority queue
-- News collection through NewsAPI
-- Rule-based sentiment analysis
-- Optional LLM-powered sentiment analysis using OpenAI
-- Stripe subscription checkout interface
-- Streamlit web interface
-- Cached market data to reduce repeated API requests
+- Priority-based technical alerts using `heapq`
+- News sentiment analysis using NewsAPI
+- Optional OpenAI LLM sentiment analysis
+- Stripe subscription checkout
+- Streamlit dashboard
+- Cached and memory-limited market data processing
 
 ## Project Structure
 
 ```text
 .
+├── app.py
 ├── main.py
 ├── requirements.txt
 └── README.md
