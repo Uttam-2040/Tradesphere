@@ -22,12 +22,14 @@ DEFAULT_PASSWORD = "TS2026!"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MODEL = "liquid/lfm-2.5-2.6b:free"
 
+REQUIRED_COLUMNS = ["Open", "High", "Low", "Close", "Volume"]
+
 
 def get_config(name: str, default: str = "") -> str:
     try:
-        secret = st.secrets.get(name, "")
-        if secret and str(secret).strip():
-            return str(secret).strip()
+        value = st.secrets.get(name, "")
+        if value and str(value).strip():
+            return str(value).strip()
     except Exception:
         pass
 
@@ -58,13 +60,10 @@ def get_login_credentials() -> tuple[str, str]:
     username = get_config("AUTH_USERNAME", DEFAULT_USERNAME)
     password = get_config("AUTH_PASSWORD", DEFAULT_PASSWORD)
 
-    if is_placeholder(username):
-        username = DEFAULT_USERNAME
-
-    if is_placeholder(password):
-        password = DEFAULT_PASSWORD
-
-    return username, password
+    return (
+        DEFAULT_USERNAME if is_placeholder(username) else username,
+        DEFAULT_PASSWORD if is_placeholder(password) else password,
+    )
 
 
 def authenticate_user(username: str, password: str) -> bool:
@@ -347,47 +346,110 @@ if "login_error" not in st.session_state:
 if "ai_messages" not in st.session_state:
     st.session_state.ai_messages = []
 
-
 if not st.session_state.authenticated:
     show_login_page()
     st.stop()
 
 
-@st.cache_data(ttl=300)
+def normalize_market_data(data: pd.DataFrame) -> pd.DataFrame:
+    if data is None or data.empty:
+        return pd.DataFrame()
+
+    result = data.copy()
+
+    if isinstance(result.columns, pd.MultiIndex):
+        result.columns = [
+            column[0] if isinstance(column, tuple) else column
+            for column in result.columns
+        ]
+
+    result.columns = [str(column).strip().title() for column in result.columns]
+
+    # Remove duplicate columns that can occasionally be returned by Yahoo.
+    result = result.loc[:, ~result.columns.duplicated()]
+
+    missing = [column for column in REQUIRED_COLUMNS if column not in result]
+    if missing:
+        raise ValueError(
+            "Yahoo Finance returned incomplete data. "
+            f"Missing columns: {', '.join(missing)}"
+        )
+
+    result = result[REQUIRED_COLUMNS].copy()
+
+    for column in REQUIRED_COLUMNS:
+        result[column] = pd.to_numeric(result[column], errors="coerce")
+
+    result = result.replace([np.inf, -np.inf], np.nan).dropna()
+
+    if result.empty:
+        return pd.DataFrame()
+
+    result.index = pd.to_datetime(result.index)
+    return result.sort_index()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
 def load_market_data(
     ticker: str,
     period: str,
     interval: str,
 ) -> pd.DataFrame:
-    data = yf.download(
-        ticker,
-        period=period,
-        interval=interval,
-        auto_adjust=True,
-        progress=False,
+    ticker = ticker.strip().upper()
+
+    if not ticker:
+        raise ValueError("Please enter a ticker symbol.")
+
+    # Yahoo Finance only supports intraday data for approximately 730 days.
+    if interval in {"1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h"}:
+        if period in {"2y", "5y"}:
+            period = "1y"
+
+    last_error = None
+
+    for attempt in range(2):
+        try:
+            data = yf.download(
+                tickers=ticker,
+                period=period,
+                interval=interval,
+                auto_adjust=True,
+                progress=False,
+                threads=False,
+                timeout=30,
+            )
+
+            normalized = normalize_market_data(data)
+
+            if not normalized.empty:
+                return normalized
+
+            last_error = (
+                "Yahoo Finance returned no rows for this ticker, period, "
+                "and interval."
+            )
+        except Exception as error:
+            last_error = str(error)
+
+        if attempt == 0:
+            continue
+
+    raise RuntimeError(
+        f"Unable to load {ticker} data. {last_error or 'Unknown error'}"
     )
-
-    if data.empty:
-        return pd.DataFrame()
-
-    if isinstance(data.columns, pd.MultiIndex):
-        data.columns = data.columns.get_level_values(0)
-
-    data.columns = [str(column).title() for column in data.columns]
-    return data.dropna()
 
 
 def calculate_indicators(data: pd.DataFrame) -> pd.DataFrame:
     result = data.copy()
     close = result["Close"]
 
-    result["SMA_20"] = close.rolling(20).mean()
-    result["SMA_50"] = close.rolling(50).mean()
+    result["SMA_20"] = close.rolling(20, min_periods=1).mean()
+    result["SMA_50"] = close.rolling(50, min_periods=1).mean()
     result["EMA_20"] = close.ewm(span=20, adjust=False).mean()
 
     delta = close.diff()
-    gain = delta.clip(lower=0).rolling(14).mean()
-    loss = -delta.clip(upper=0).rolling(14).mean()
+    gain = delta.clip(lower=0).rolling(14, min_periods=14).mean()
+    loss = -delta.clip(upper=0).rolling(14, min_periods=14).mean()
     rs = gain / loss.replace(0, np.nan)
     result["RSI"] = 100 - (100 / (1 + rs))
 
@@ -399,8 +461,8 @@ def calculate_indicators(data: pd.DataFrame) -> pd.DataFrame:
         adjust=False,
     ).mean()
 
-    middle = close.rolling(20).mean()
-    deviation = close.rolling(20).std()
+    middle = close.rolling(20, min_periods=1).mean()
+    deviation = close.rolling(20, min_periods=1).std()
     result["BB_Middle"] = middle
     result["BB_Upper"] = middle + 2 * deviation
     result["BB_Lower"] = middle - 2 * deviation
@@ -421,13 +483,10 @@ def find_support_resistance(
     resistances = []
 
     for index in range(window, len(data) - window):
-        low_window = lows[index - window:index + window + 1]
-        high_window = highs[index - window:index + window + 1]
-
-        if lows[index] == np.min(low_window):
+        if lows[index] == np.min(lows[index - window:index + window + 1]):
             supports.append(float(lows[index]))
 
-        if highs[index] == np.max(high_window):
+        if highs[index] == np.max(highs[index - window:index + window + 1]):
             resistances.append(float(highs[index]))
 
     return supports[-5:], resistances[-5:]
@@ -450,18 +509,20 @@ def build_alert_queue(data: pd.DataFrame) -> list[tuple[int, str]]:
     if (
         pd.notna(latest["MACD"])
         and pd.notna(latest["MACD_Signal"])
-        and latest["MACD"] > latest["MACD_Signal"]
-        and previous["MACD"] <= previous["MACD_Signal"]
+        and pd.notna(previous["MACD"])
+        and pd.notna(previous["MACD_Signal"])
     ):
-        heapq.heappush(alerts, (2, "MACD bullish crossover detected"))
+        if (
+            latest["MACD"] > latest["MACD_Signal"]
+            and previous["MACD"] <= previous["MACD_Signal"]
+        ):
+            heapq.heappush(alerts, (2, "MACD bullish crossover detected"))
 
-    if (
-        pd.notna(latest["MACD"])
-        and pd.notna(latest["MACD_Signal"])
-        and latest["MACD"] < latest["MACD_Signal"]
-        and previous["MACD"] >= previous["MACD_Signal"]
-    ):
-        heapq.heappush(alerts, (2, "MACD bearish crossover detected"))
+        if (
+            latest["MACD"] < latest["MACD_Signal"]
+            and previous["MACD"] >= previous["MACD_Signal"]
+        ):
+            heapq.heappush(alerts, (2, "MACD bearish crossover detected"))
 
     if pd.notna(latest["BB_Upper"]) and latest["Close"] > latest["BB_Upper"]:
         heapq.heappush(alerts, (3, "Price is above the upper Bollinger Band"))
@@ -469,13 +530,12 @@ def build_alert_queue(data: pd.DataFrame) -> list[tuple[int, str]]:
     if pd.notna(latest["BB_Lower"]) and latest["Close"] < latest["BB_Lower"]:
         heapq.heappush(alerts, (3, "Price is below the lower Bollinger Band"))
 
-    if pd.notna(latest["SMA_20"]) and pd.notna(latest["SMA_50"]):
-        trend = (
-            "Short-term trend is above the long-term trend"
-            if latest["SMA_20"] > latest["SMA_50"]
-            else "Short-term trend is below the long-term trend"
-        )
-        heapq.heappush(alerts, (4, trend))
+    trend = (
+        "Short-term trend is above the long-term trend"
+        if latest["SMA_20"] > latest["SMA_50"]
+        else "Short-term trend is below the long-term trend"
+    )
+    heapq.heappush(alerts, (4, trend))
 
     return alerts
 
@@ -559,7 +619,9 @@ def build_market_context(ticker: str, data: pd.DataFrame) -> str:
     latest = data.iloc[-1]
     previous = data.iloc[-2] if len(data) > 1 else latest
     change = latest["Close"] - previous["Close"]
-    change_percent = change / previous["Close"] * 100
+    change_percent = (
+        change / previous["Close"] * 100 if previous["Close"] else 0
+    )
     support, resistance = find_support_resistance(data)
     alerts = build_alert_queue(data)
 
@@ -579,15 +641,12 @@ Alerts: {[message for _, message in alerts] or "None"}
 
 
 def get_openrouter_key() -> str:
-    api_key = get_config("OPENROUTER_API_KEY")
+    key = get_config("OPENROUTER_API_KEY")
 
-    if is_placeholder(api_key):
+    if is_placeholder(key) or not key.startswith("sk-or-"):
         return ""
 
-    if not api_key.startswith("sk-or-"):
-        return ""
-
-    return api_key
+    return key
 
 
 def ask_ai_assistant(
@@ -596,51 +655,37 @@ def ask_ai_assistant(
     data: pd.DataFrame,
 ) -> str:
     api_key = get_openrouter_key()
-    model = get_config("OPENROUTER_MODEL", DEFAULT_MODEL)
 
     if not api_key:
         raise RuntimeError(
-            "OpenRouter is not configured. Add a real "
-            "`OPENROUTER_API_KEY` beginning with `sk-or-` to Streamlit "
-            "Secrets."
+            "Add a valid OPENROUTER_API_KEY to Streamlit Secrets."
         )
-
-    context = build_market_context(ticker, data)
 
     messages = [
         {
             "role": "system",
             "content": (
                 "You are Tradesphere AI, an educational market-analysis "
-                "assistant. Use the supplied data, explain indicators clearly, "
-                "never guarantee profits, and do not provide personalized "
-                "financial advice. Keep responses practical and concise."
+                "assistant. Explain indicators clearly, never guarantee "
+                "profits, and do not provide personalized financial advice."
             ),
         }
     ]
 
-    # The current user message is already stored by show_ai_assistant().
-    # Preserve reasoning_details exactly for subsequent requests.
     for message in st.session_state.ai_messages[-8:]:
-        api_message = {
-            "role": message["role"],
-            "content": message.get("content", ""),
-        }
-
-        if (
-            message["role"] == "assistant"
-            and message.get("reasoning_details") is not None
-        ):
-            api_message["reasoning_details"] = message["reasoning_details"]
-
-        messages.append(api_message)
+        messages.append(
+            {
+                "role": message["role"],
+                "content": message.get("content", ""),
+            }
+        )
 
     messages.append(
         {
             "role": "user",
             "content": (
-                f"Current market context:\n{context}\n\n"
-                f"Please answer the user's latest question using this context."
+                f"Market context:\n{build_market_context(ticker, data)}\n\n"
+                f"Question: {question}"
             ),
         }
     )
@@ -657,9 +702,8 @@ def ask_ai_assistant(
             "X-Title": "Tradesphere AI",
         },
         json={
-            "model": model,
+            "model": get_config("OPENROUTER_MODEL", DEFAULT_MODEL),
             "messages": messages,
-            "reasoning": {"enabled": True},
             "temperature": 0.2,
             "max_tokens": 700,
         },
@@ -677,14 +721,12 @@ def ask_ai_assistant(
 
         raise RuntimeError(f"OpenRouter request failed: {error}")
 
-    result = response.json()
-    choices = result.get("choices", [])
+    choices = response.json().get("choices", [])
 
     if not choices:
         raise RuntimeError("OpenRouter returned no response choices.")
 
-    assistant_message = choices[0].get("message", {})
-    answer = assistant_message.get("content")
+    answer = choices[0].get("message", {}).get("content", "")
 
     if isinstance(answer, list):
         answer = "\n".join(
@@ -696,15 +738,8 @@ def ask_ai_assistant(
     if not answer:
         raise RuntimeError("OpenRouter returned an empty response.")
 
-    # Save the complete assistant message for the next API call.
     st.session_state.ai_messages.append(
-        {
-            "role": "assistant",
-            "content": answer,
-            "reasoning_details": assistant_message.get(
-                "reasoning_details"
-            ),
-        }
+        {"role": "assistant", "content": answer}
     )
 
     return answer
@@ -732,19 +767,15 @@ def show_ai_assistant(ticker: str, data: pd.DataFrame) -> None:
     question = st.chat_input(f"Ask Tradesphere AI about {ticker}...")
 
     if question:
-        # Store the user message once. ask_ai_assistant reads it from here.
         st.session_state.ai_messages.append(
-            {
-                "role": "user",
-                "content": question,
-            }
+            {"role": "user", "content": question}
         )
 
         with st.chat_message("user"):
             st.markdown(question)
 
         with st.chat_message("assistant"):
-            with st.spinner("Tradesphere AI is analyzing the dashboard..."):
+            with st.spinner("Analyzing market data..."):
                 try:
                     answer = ask_ai_assistant(question, ticker, data)
                 except Exception as error:
@@ -789,6 +820,12 @@ with st.sidebar:
         index=0,
     )
 
+    if interval == "1h" and period in {"2y", "5y"}:
+        st.warning(
+            "Yahoo Finance supports hourly data for approximately 2 years. "
+            "The app will automatically use 1y."
+        )
+
     run_analysis = st.button(
         "🚀 Run analysis",
         type="primary",
@@ -810,16 +847,28 @@ with st.sidebar:
         st.rerun()
 
 
-if run_analysis or "market_data" not in st.session_state:
-    with st.spinner(f"Loading {ticker} market data..."):
-        raw_data = load_market_data(ticker, period, interval)
+saved_request = st.session_state.get("market_request")
+current_request = (ticker, period, interval)
 
-    if raw_data.empty:
-        st.error("No market data found. Check the ticker or interval.")
-        st.stop()
+if (
+    run_analysis
+    or "market_data" not in st.session_state
+    or saved_request != current_request
+):
+    with st.spinner(f"Loading {ticker or 'market'} data..."):
+        try:
+            raw_data = load_market_data(ticker, period, interval)
+            st.session_state.market_data = calculate_indicators(raw_data)
+            st.session_state.analysis_ticker = ticker
+            st.session_state.market_request = current_request
+        except Exception as error:
+            st.error(f"Market data could not be loaded: {error}")
+            st.info(
+                "Try a valid ticker such as AAPL, MSFT, TSLA, or NVDA. "
+                "For hourly data, select 1mo, 3mo, 6mo, or 1y."
+            )
+            st.stop()
 
-    st.session_state.market_data = calculate_indicators(raw_data)
-    st.session_state.analysis_ticker = ticker
 
 data = st.session_state.market_data
 active_ticker = st.session_state.analysis_ticker
@@ -827,7 +876,9 @@ latest = data.iloc[-1]
 previous = data.iloc[-2] if len(data) > 1 else latest
 
 price_change = latest["Close"] - previous["Close"]
-percent_change = price_change / previous["Close"] * 100
+percent_change = (
+    price_change / previous["Close"] * 100 if previous["Close"] else 0
+)
 
 header_left, header_right = st.columns([4, 1])
 
@@ -877,7 +928,6 @@ metric_1.metric(
     money(latest["Close"]),
     f"{price_change:.2f} ({percent_change:.2f}%)",
 )
-
 metric_2.metric("RSI", number(latest["RSI"]))
 metric_3.metric("MACD", number(latest["MACD"]))
 metric_4.metric("Volume", f"{latest['Volume']:,.0f}")
@@ -931,16 +981,13 @@ with overview_tab:
 
         alerts = build_alert_queue(data)
 
-        if alerts:
-            for priority, alert in alerts:
-                if priority == 1:
-                    st.error(f"Priority {priority}: {alert}")
-                elif priority == 2:
-                    st.warning(f"Priority {priority}: {alert}")
-                else:
-                    st.info(f"Priority {priority}: {alert}")
-        else:
-            st.success("No alerts detected.")
+        for priority, alert in alerts:
+            if priority == 1:
+                st.error(f"Priority {priority}: {alert}")
+            elif priority == 2:
+                st.warning(f"Priority {priority}: {alert}")
+            else:
+                st.info(f"Priority {priority}: {alert}")
 
 
 with technical_tab:
