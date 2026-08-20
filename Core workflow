@@ -1,0 +1,44 @@
+User selects stock
+        ↓
+Fetch historical OHLCV data
+        ↓
+Clean and validate the data
+        ↓
+Calculate technical indicators
+        ↓
+Detect patterns and signals
+        ↓
+Run backtesting
+        ↓
+Generate explanation and risk metrics
+        ↓
+Display chart, score, and historical performance
+              
+
+
+
+               STOCK DATA
+                    ↓
+        ┌─────────────────────┐
+        │ Technical Indicators│
+        └──────────┬──────────┘
+                   ↓
+       ┌────────────────────────┐
+       │ RSI                    │
+       │ MACD                   │
+       │ SMA / EMA              │
+       │ Bollinger Bands        │
+       │ Volume                 │
+       │ VWAP                   │
+       │ ATR                    │
+       └───────────┬────────────┘
+                   ↓
+             AI / ML MODEL
+                   ↓
+        ┌──────────────────────┐
+        │ Pattern Recognition  │
+        │ Trend Classification │
+        │ Risk Analysis        │
+        └──────────┬───────────┘
+                   ↓
+             AI INSIGHTS
