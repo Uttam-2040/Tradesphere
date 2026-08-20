@@ -21,23 +21,20 @@ DEFAULT_USERNAME = "tsadmin"
 DEFAULT_PASSWORD = "TS2026!"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MODEL = "liquid/lfm-2.5-2.6b:free"
-
 REQUIRED_COLUMNS = ["Open", "High", "Low", "Close", "Volume"]
 
 
 def get_config(name: str, default: str = "") -> str:
     try:
-        value = st.secrets.get(name, "")
-        if value and str(value).strip():
-            return str(value).strip()
+        value = st.secrets.get(name, default)
     except Exception:
-        pass
+        value = os.getenv(name, default)
 
-    return os.getenv(name, default).strip()
+    return str(value or default).strip()
 
 
 def is_placeholder(value: str) -> bool:
-    value = str(value).strip().lower()
+    value = str(value or "").strip().lower()
 
     return (
         not value
@@ -49,9 +46,9 @@ def is_placeholder(value: str) -> bool:
             "change-this-password",
             "your-real-password",
             "replace-me",
+            "openrouter_api_key",
             "your-real-openrouter-key",
             "sk-or-v1-your-real-key",
-            "openrouter_api_key",
         }
     )
 
@@ -106,7 +103,6 @@ st.markdown(
 
     [data-testid="stSidebar"] {
         background: linear-gradient(180deg,#0b1220,#080f1c);
-        border-right: 1px solid rgba(148,163,184,.16);
     }
 
     .login-box {
@@ -117,7 +113,6 @@ st.markdown(
         text-align: center;
         background: rgba(15,23,42,.9);
         border: 1px solid rgba(148,163,184,.2);
-        box-shadow: 0 25px 80px rgba(0,0,0,.45);
     }
 
     .ts-logo,
@@ -127,9 +122,7 @@ st.markdown(
         justify-content: center;
         color: white;
         font-weight: 900;
-        letter-spacing: -2px;
         background: linear-gradient(135deg,#2563eb,#14b8a6);
-        box-shadow: 0 12px 30px rgba(20,184,166,.3);
     }
 
     .ts-logo {
@@ -146,10 +139,14 @@ st.markdown(
         border-radius: 14px;
     }
 
-    .login-title {
+    .login-title,
+    .dashboard-title {
         color: #f8fafc;
-        font-size: 2rem;
         font-weight: 850;
+    }
+
+    .login-title {
+        font-size: 2rem;
     }
 
     .login-subtitle,
@@ -157,16 +154,20 @@ st.markdown(
         color: #94a3b8;
     }
 
+    .credential-box,
+    .status-card,
+    .ai-card {
+        padding: 16px 18px;
+        border-radius: 16px;
+        background: rgba(15,23,42,.72);
+        border: 1px solid rgba(148,163,184,.15);
+    }
+
     .credential-box {
         max-width: 470px;
         margin: 15px auto;
-        padding: 14px;
-        border-radius: 14px;
-        background: rgba(14,116,144,.14);
-        border: 1px solid rgba(56,189,248,.25);
-        color: #bae6fd;
         text-align: center;
-        font-size: .85rem;
+        color: #bae6fd;
     }
 
     .sidebar-brand {
@@ -196,19 +197,14 @@ st.markdown(
     }
 
     .dashboard-title {
-        color: #f8fafc;
         font-size: 2.15rem;
-        font-weight: 850;
-        letter-spacing: -.05em;
     }
 
     .hero {
         padding: 28px 30px;
         margin: 20px 0;
-        border: 1px solid rgba(96,165,250,.22);
         border-radius: 24px;
         background: linear-gradient(135deg,#1e40af,#0f766e);
-        box-shadow: 0 18px 45px rgba(2,6,23,.35);
     }
 
     .hero h1 {
@@ -230,14 +226,6 @@ st.markdown(
         background: rgba(15,23,42,.72);
     }
 
-    div[data-testid="stMetricLabel"] {
-        color: #94a3b8;
-    }
-
-    div[data-testid="stMetricValue"] {
-        color: #f8fafc;
-    }
-
     .section-title {
         color: #f8fafc;
         font-size: 1.2rem;
@@ -245,33 +233,11 @@ st.markdown(
         margin: 20px 0 10px;
     }
 
-    .status-card,
-    .ai-card {
-        padding: 16px 18px;
-        border-radius: 16px;
-        background: rgba(15,23,42,.72);
-        border: 1px solid rgba(148,163,184,.15);
-    }
-
-    .ai-card {
-        border-color: rgba(56,189,248,.3);
-        background: linear-gradient(
-            135deg,
-            rgba(30,64,175,.2),
-            rgba(15,118,110,.14)
-        );
-    }
-
     .disclaimer {
         color: #64748b;
         font-size: .78rem;
         text-align: center;
         margin: 32px 0 10px;
-    }
-
-    .stButton > button {
-        border-radius: 10px;
-        font-weight: 650;
     }
     </style>
     """,
@@ -296,15 +262,10 @@ def show_login_page() -> None:
     )
 
     with st.form("login_form"):
-        username = st.text_input(
-            "Username",
-            placeholder="Enter username",
-            autocomplete="username",
-        )
+        username = st.text_input("Username", autocomplete="username")
         password = st.text_input(
             "Password",
             type="password",
-            placeholder="Enter password",
             autocomplete="current-password",
         )
         submitted = st.form_submit_button(
@@ -364,8 +325,6 @@ def normalize_market_data(data: pd.DataFrame) -> pd.DataFrame:
         ]
 
     result.columns = [str(column).strip().title() for column in result.columns]
-
-    # Remove duplicate columns that can occasionally be returned by Yahoo.
     result = result.loc[:, ~result.columns.duplicated()]
 
     missing = [column for column in REQUIRED_COLUMNS if column not in result]
@@ -400,12 +359,10 @@ def load_market_data(
     if not ticker:
         raise ValueError("Please enter a ticker symbol.")
 
-    # Yahoo Finance only supports intraday data for approximately 730 days.
-    if interval in {"1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h"}:
-        if period in {"2y", "5y"}:
-            period = "1y"
+    if interval == "1h" and period in {"2y", "5y"}:
+        period = "1y"
 
-    last_error = None
+    last_error = ""
 
     for attempt in range(2):
         try:
@@ -424,10 +381,8 @@ def load_market_data(
             if not normalized.empty:
                 return normalized
 
-            last_error = (
-                "Yahoo Finance returned no rows for this ticker, period, "
-                "and interval."
-            )
+            last_error = "Yahoo Finance returned no rows."
+
         except Exception as error:
             last_error = str(error)
 
@@ -435,7 +390,7 @@ def load_market_data(
             continue
 
     raise RuntimeError(
-        f"Unable to load {ticker} data. {last_error or 'Unknown error'}"
+        f"Unable to load {ticker} data. {last_error}"
     )
 
 
@@ -483,10 +438,13 @@ def find_support_resistance(
     resistances = []
 
     for index in range(window, len(data) - window):
-        if lows[index] == np.min(lows[index - window:index + window + 1]):
+        section_low = lows[index - window:index + window + 1]
+        section_high = highs[index - window:index + window + 1]
+
+        if lows[index] == np.min(section_low):
             supports.append(float(lows[index]))
 
-        if highs[index] == np.max(highs[index - window:index + window + 1]):
+        if highs[index] == np.max(section_high):
             resistances.append(float(highs[index]))
 
     return supports[-5:], resistances[-5:]
@@ -579,7 +537,6 @@ def create_price_chart(data: pd.DataFrame) -> go.Figure:
         xaxis_rangeslider_visible=False,
         hovermode="x unified",
         margin={"l": 10, "r": 10, "t": 30, "b": 10},
-        legend={"orientation": "h", "y": 1.02},
     )
 
     return figure
@@ -619,9 +576,7 @@ def build_market_context(ticker: str, data: pd.DataFrame) -> str:
     latest = data.iloc[-1]
     previous = data.iloc[-2] if len(data) > 1 else latest
     change = latest["Close"] - previous["Close"]
-    change_percent = (
-        change / previous["Close"] * 100 if previous["Close"] else 0
-    )
+    change_percent = change / previous["Close"] * 100 if previous["Close"] else 0
     support, resistance = find_support_resistance(data)
     alerts = build_alert_queue(data)
 
@@ -643,10 +598,55 @@ Alerts: {[message for _, message in alerts] or "None"}
 def get_openrouter_key() -> str:
     key = get_config("OPENROUTER_API_KEY")
 
-    if is_placeholder(key) or not key.startswith("sk-or-"):
+    if not key:
+        return ""
+
+    # OpenRouter keys normally begin with sk-or-v1-.
+    if not key.startswith("sk-or-v1-"):
         return ""
 
     return key
+
+
+def explain_openrouter_error(response: requests.Response) -> str:
+    try:
+        payload = response.json()
+        error_data = payload.get("error", {})
+
+        if isinstance(error_data, dict):
+            message = error_data.get("message", "")
+            code = error_data.get("code", response.status_code)
+        else:
+            message = str(error_data)
+            code = response.status_code
+    except ValueError:
+        message = response.text.strip()
+        code = response.status_code
+
+    message = message or "Unknown OpenRouter error"
+
+    if response.status_code in {401, 403} or "user not found" in message.lower():
+        return (
+            "OpenRouter rejected the API key. Create a new key at "
+            "https://openrouter.ai/keys and replace OPENROUTER_API_KEY "
+            "in Streamlit Secrets. The key must start with sk-or-v1-. "
+            f"API response: {message} (code {code})"
+        )
+
+    if response.status_code == 402:
+        return (
+            "OpenRouter has no available credits for this request. "
+            "Add credits or choose an available free model. "
+            f"API response: {message}"
+        )
+
+    if response.status_code == 429:
+        return (
+            "OpenRouter rate limit reached. Wait a moment and try again. "
+            f"API response: {message}"
+        )
+
+    return f"{message} (HTTP {code})"
 
 
 def ask_ai_assistant(
@@ -658,8 +658,19 @@ def ask_ai_assistant(
 
     if not api_key:
         raise RuntimeError(
-            "Add a valid OPENROUTER_API_KEY to Streamlit Secrets."
+            "OPENROUTER_API_KEY is missing or invalid. "
+            "Add a new OpenRouter key beginning with sk-or-v1- "
+            "to Streamlit Secrets."
         )
+
+    history = [
+        {
+            "role": message["role"],
+            "content": message.get("content", ""),
+        }
+        for message in st.session_state.ai_messages[-8:]
+        if message.get("role") in {"user", "assistant"}
+    ]
 
     messages = [
         {
@@ -669,59 +680,55 @@ def ask_ai_assistant(
                 "assistant. Explain indicators clearly, never guarantee "
                 "profits, and do not provide personalized financial advice."
             ),
-        }
-    ]
-
-    for message in st.session_state.ai_messages[-8:]:
-        messages.append(
-            {
-                "role": message["role"],
-                "content": message.get("content", ""),
-            }
-        )
-
-    messages.append(
+        },
+        *history,
         {
             "role": "user",
             "content": (
                 f"Market context:\n{build_market_context(ticker, data)}\n\n"
                 f"Question: {question}"
             ),
-        }
-    )
+        },
+    ]
 
-    response = requests.post(
-        OPENROUTER_URL,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": get_config(
-                "APP_URL",
-                "https://tradesphere.streamlit.app",
-            ),
-            "X-Title": "Tradesphere AI",
-        },
-        json={
-            "model": get_config("OPENROUTER_MODEL", DEFAULT_MODEL),
-            "messages": messages,
-            "temperature": 0.2,
-            "max_tokens": 700,
-        },
-        timeout=60,
-    )
+    model = get_config("OPENROUTER_MODEL", DEFAULT_MODEL)
+
+    try:
+        response = requests.post(
+            OPENROUTER_URL,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": get_config(
+                    "APP_URL",
+                    "https://tradesphere.streamlit.app",
+                ),
+                "X-Title": "Tradesphere AI",
+            },
+            json={
+                "model": model,
+                "messages": messages,
+                "temperature": 0.2,
+                "max_tokens": 700,
+            },
+            timeout=60,
+        )
+    except requests.RequestException as error:
+        raise RuntimeError(
+            f"Could not connect to OpenRouter: {error}"
+        ) from error
 
     if not response.ok:
-        try:
-            error = response.json().get("error", {}).get(
-                "message",
-                response.text,
-            )
-        except Exception:
-            error = response.text
+        raise RuntimeError(explain_openrouter_error(response))
 
-        raise RuntimeError(f"OpenRouter request failed: {error}")
+    try:
+        payload = response.json()
+    except ValueError as error:
+        raise RuntimeError(
+            "OpenRouter returned an invalid JSON response."
+        ) from error
 
-    choices = response.json().get("choices", [])
+    choices = payload.get("choices", [])
 
     if not choices:
         raise RuntimeError("OpenRouter returned no response choices.")
@@ -735,12 +742,10 @@ def ask_ai_assistant(
             if isinstance(item, dict)
         )
 
+    answer = str(answer).strip()
+
     if not answer:
         raise RuntimeError("OpenRouter returned an empty response.")
-
-    st.session_state.ai_messages.append(
-        {"role": "assistant", "content": answer}
-    )
 
     return answer
 
@@ -762,26 +767,38 @@ def show_ai_assistant(ticker: str, data: pd.DataFrame) -> None:
 
     for message in st.session_state.ai_messages:
         with st.chat_message(message["role"]):
-            st.markdown(message.get("content", ""))
+            st.markdown(message["content"])
 
     question = st.chat_input(f"Ask Tradesphere AI about {ticker}...")
 
-    if question:
-        st.session_state.ai_messages.append(
-            {"role": "user", "content": question}
-        )
+    if not question:
+        return
 
-        with st.chat_message("user"):
-            st.markdown(question)
+    st.session_state.ai_messages.append(
+        {"role": "user", "content": question}
+    )
 
-        with st.chat_message("assistant"):
-            with st.spinner("Analyzing market data..."):
-                try:
-                    answer = ask_ai_assistant(question, ticker, data)
-                except Exception as error:
-                    answer = f"AI Assistant error: {error}"
+    with st.chat_message("user"):
+        st.markdown(question)
 
-            st.markdown(answer)
+    with st.chat_message("assistant"):
+        with st.spinner("Analyzing market data..."):
+            try:
+                answer = ask_ai_assistant(question, ticker, data)
+                st.session_state.ai_messages.append(
+                    {"role": "assistant", "content": answer}
+                )
+            except Exception as error:
+                answer = str(error)
+
+        if "OpenRouter rejected the API key" in answer:
+            st.error(answer)
+            st.info(
+                "After updating Streamlit Secrets, restart the app or "
+                "clear the app cache."
+            )
+        else:
+            st.error(f"AI Assistant error: {answer}")
 
 
 with st.sidebar:
@@ -822,8 +839,7 @@ with st.sidebar:
 
     if interval == "1h" and period in {"2y", "5y"}:
         st.warning(
-            "Yahoo Finance supports hourly data for approximately 2 years. "
-            "The app will automatically use 1y."
+            "Hourly data will automatically use a maximum period of 1 year."
         )
 
     run_analysis = st.button(
@@ -864,8 +880,7 @@ if (
         except Exception as error:
             st.error(f"Market data could not be loaded: {error}")
             st.info(
-                "Try a valid ticker such as AAPL, MSFT, TSLA, or NVDA. "
-                "For hourly data, select 1mo, 3mo, 6mo, or 1y."
+                "Try a valid ticker such as AAPL, MSFT, TSLA, or NVDA."
             )
             st.stop()
 
@@ -876,13 +891,11 @@ latest = data.iloc[-1]
 previous = data.iloc[-2] if len(data) > 1 else latest
 
 price_change = latest["Close"] - previous["Close"]
-percent_change = (
-    price_change / previous["Close"] * 100 if previous["Close"] else 0
-)
+percent_change = price_change / previous["Close"] * 100 if previous["Close"] else 0
 
-header_left, header_right = st.columns([4, 1])
+left, right = st.columns([4, 1])
 
-with header_left:
+with left:
     st.markdown(
         '<div class="eyebrow">Live workspace</div>',
         unsafe_allow_html=True,
@@ -898,7 +911,7 @@ with header_left:
         unsafe_allow_html=True,
     )
 
-with header_right:
+with right:
     st.markdown(
         """
         <div class="status-card">
@@ -922,7 +935,6 @@ st.markdown(
 st.caption("Educational analytics only — not financial advice.")
 
 metric_1, metric_2, metric_3, metric_4 = st.columns(4)
-
 metric_1.metric(
     "Latest Price",
     money(latest["Close"]),
@@ -941,7 +953,6 @@ overview_tab, technical_tab, ai_tab, news_tab = st.tabs(
     ]
 )
 
-
 with overview_tab:
     st.markdown(
         '<div class="section-title">Price Overview</div>',
@@ -954,34 +965,31 @@ with overview_tab:
         config={"displayModeBar": False},
     )
 
-    support_levels, resistance_levels = find_support_resistance(data)
-    left_column, right_column = st.columns(2)
+    support, resistance = find_support_resistance(data)
+    column_1, column_2 = st.columns(2)
 
-    with left_column:
+    with column_1:
         st.markdown(
             '<div class="section-title">Support and Resistance</div>',
             unsafe_allow_html=True,
         )
         st.write(
             "🟢 Support levels:",
-            [round(level, 2) for level in support_levels]
-            or "Not enough data",
+            [round(level, 2) for level in support] or "Not enough data",
         )
         st.write(
             "🔴 Resistance levels:",
-            [round(level, 2) for level in resistance_levels]
+            [round(level, 2) for level in resistance]
             or "Not enough data",
         )
 
-    with right_column:
+    with column_2:
         st.markdown(
             '<div class="section-title">Priority Alerts</div>',
             unsafe_allow_html=True,
         )
 
-        alerts = build_alert_queue(data)
-
-        for priority, alert in alerts:
+        for priority, alert in build_alert_queue(data):
             if priority == 1:
                 st.error(f"Priority {priority}: {alert}")
             elif priority == 2:
@@ -989,20 +997,39 @@ with overview_tab:
             else:
                 st.info(f"Priority {priority}: {alert}")
 
-
 with technical_tab:
     st.markdown(
         '<div class="section-title">Relative Strength Index</div>',
         unsafe_allow_html=True,
     )
 
+    figure = go.Figure()
+    figure.add_trace(
+        go.Scatter(
+            x=data.index,
+            y=data["RSI"],
+            name="RSI",
+            line={"color": "#22c55e", "width": 2},
+            fill="tozeroy",
+        )
+    )
+    figure.add_hline(y=70, line_dash="dash", line_color="#ef4444")
+    figure.add_hline(y=30, line_dash="dash", line_color="#38bdf8")
+    figure.update_layout(
+        height=280,
+        template="plotly_dark",
+        yaxis_range=[0, 100],
+        xaxis_title="Date",
+        yaxis_title="RSI",
+    )
+
     st.plotly_chart(
-        create_indicator_chart(data),
+        figure,
         use_container_width=True,
         config={"displayModeBar": False},
     )
 
-    technical_columns = [
+    columns = [
         "Close",
         "SMA_20",
         "SMA_50",
@@ -1013,17 +1040,13 @@ with technical_tab:
     ]
 
     st.dataframe(
-        data[technical_columns].tail(20).sort_index(
-            ascending=False
-        ).round(2),
+        data[columns].tail(20).sort_index(ascending=False).round(2),
         use_container_width=True,
         height=420,
     )
 
-
 with ai_tab:
     show_ai_assistant(active_ticker, data)
-
 
 with news_tab:
     st.markdown(
@@ -1069,7 +1092,6 @@ with news_tab:
             st.error(f"News request failed: {error}")
     else:
         st.info("Click the button to load recent news.")
-
 
 st.markdown(
     """
