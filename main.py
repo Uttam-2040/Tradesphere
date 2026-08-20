@@ -12,7 +12,7 @@ import yfinance as yf
 
 st.set_page_config(
     page_title="Tradesphere",
-    page_icon="📈",
+    page_icon="https://chatgpt.com/s/m_6a87812eaed4819197d69476fa6374d2",
     layout="wide",
     initial_sidebar_state="expanded",
 )
