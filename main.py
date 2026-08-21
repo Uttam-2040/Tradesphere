@@ -8,6 +8,7 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 import yfinance as yf
+from openai import OpenAI
 
 
 st.set_page_config(
@@ -19,18 +20,35 @@ st.set_page_config(
 
 DEFAULT_USERNAME = "tsadmin"
 DEFAULT_PASSWORD = "TS2026!"
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = "liquid/lfm-2.5-2.6b:free"
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+# The model can be changed with OPENROUTER_MODEL.
+DEFAULT_MODEL = "~deepseek/deepseek-v4-flash-latest"
+
 REQUIRED_COLUMNS = ["Open", "High", "Low", "Close", "Volume"]
 
 
 def get_config(name: str, default: str = "") -> str:
-    try:
-        value = st.secrets.get(name, default)
-    except Exception:
-        value = os.getenv(name, default)
+    """
+    Environment variables take priority over Streamlit Secrets.
 
-    return str(value or default).strip()
+    This allows:
+        export OPENROUTER_API_KEY="sk-or-v1-..."
+    """
+    environment_value = os.getenv(name)
+
+    if environment_value and environment_value.strip():
+        return environment_value.strip().strip('"').strip("'")
+
+    try:
+        secret_value = st.secrets.get(name)
+    except Exception:
+        secret_value = None
+
+    if secret_value is not None and str(secret_value).strip():
+        return str(secret_value).strip().strip('"').strip("'")
+
+    return default.strip()
 
 
 def is_placeholder(value: str) -> bool:
@@ -57,10 +75,13 @@ def get_login_credentials() -> tuple[str, str]:
     username = get_config("AUTH_USERNAME", DEFAULT_USERNAME)
     password = get_config("AUTH_PASSWORD", DEFAULT_PASSWORD)
 
-    return (
-        DEFAULT_USERNAME if is_placeholder(username) else username,
-        DEFAULT_PASSWORD if is_placeholder(password) else password,
-    )
+    if is_placeholder(username):
+        username = DEFAULT_USERNAME
+
+    if is_placeholder(password):
+        password = DEFAULT_PASSWORD
+
+    return username, password
 
 
 def authenticate_user(username: str, password: str) -> bool:
@@ -298,20 +319,6 @@ def show_login_page() -> None:
     )
 
 
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
-
-if "login_error" not in st.session_state:
-    st.session_state.login_error = ""
-
-if "ai_messages" not in st.session_state:
-    st.session_state.ai_messages = []
-
-if not st.session_state.authenticated:
-    show_login_page()
-    st.stop()
-
-
 def normalize_market_data(data: pd.DataFrame) -> pd.DataFrame:
     if data is None or data.empty:
         return pd.DataFrame()
@@ -328,6 +335,7 @@ def normalize_market_data(data: pd.DataFrame) -> pd.DataFrame:
     result = result.loc[:, ~result.columns.duplicated()]
 
     missing = [column for column in REQUIRED_COLUMNS if column not in result]
+
     if missing:
         raise ValueError(
             "Yahoo Finance returned incomplete data. "
@@ -362,7 +370,7 @@ def load_market_data(
     if interval == "1h" and period in {"2y", "5y"}:
         period = "1y"
 
-    last_error = ""
+    last_error = "Unknown Yahoo Finance error."
 
     for attempt in range(2):
         try:
@@ -389,9 +397,7 @@ def load_market_data(
         if attempt == 0:
             continue
 
-    raise RuntimeError(
-        f"Unable to load {ticker} data. {last_error}"
-    )
+    raise RuntimeError(f"Unable to load {ticker} data. {last_error}")
 
 
 def calculate_indicators(data: pd.DataFrame) -> pd.DataFrame:
@@ -438,13 +444,13 @@ def find_support_resistance(
     resistances = []
 
     for index in range(window, len(data) - window):
-        section_low = lows[index - window:index + window + 1]
-        section_high = highs[index - window:index + window + 1]
+        low_section = lows[index - window:index + window + 1]
+        high_section = highs[index - window:index + window + 1]
 
-        if lows[index] == np.min(section_low):
+        if lows[index] == np.min(low_section):
             supports.append(float(lows[index]))
 
-        if highs[index] == np.max(section_high):
+        if highs[index] == np.max(high_section):
             resistances.append(float(highs[index]))
 
     return supports[-5:], resistances[-5:]
@@ -464,11 +470,12 @@ def build_alert_queue(data: pd.DataFrame) -> list[tuple[int, str]]:
         elif latest["RSI"] > 70:
             heapq.heappush(alerts, (1, "RSI indicates an overbought condition"))
 
-    if (
-        pd.notna(latest["MACD"])
-        and pd.notna(latest["MACD_Signal"])
-        and pd.notna(previous["MACD"])
-        and pd.notna(previous["MACD_Signal"])
+    if all(
+        pd.notna(latest[column])
+        for column in ["MACD", "MACD_Signal"]
+    ) and all(
+        pd.notna(previous[column])
+        for column in ["MACD", "MACD_Signal"]
     ):
         if (
             latest["MACD"] > latest["MACD_Signal"]
@@ -542,41 +549,17 @@ def create_price_chart(data: pd.DataFrame) -> go.Figure:
     return figure
 
 
-def create_indicator_chart(data: pd.DataFrame) -> go.Figure:
-    figure = go.Figure()
-
-    figure.add_trace(
-        go.Scatter(
-            x=data.index,
-            y=data["RSI"],
-            name="RSI",
-            line={"color": "#22c55e", "width": 2},
-            fill="tozeroy",
-            fillcolor="rgba(34,197,94,.08)",
-        )
-    )
-
-    figure.add_hline(y=70, line_dash="dash", line_color="#ef4444")
-    figure.add_hline(y=30, line_dash="dash", line_color="#38bdf8")
-
-    figure.update_layout(
-        height=280,
-        template="plotly_dark",
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(15,23,42,.6)",
-        yaxis_title="RSI",
-        yaxis_range=[0, 100],
-        margin={"l": 10, "r": 10, "t": 20, "b": 10},
-    )
-
-    return figure
-
-
 def build_market_context(ticker: str, data: pd.DataFrame) -> str:
     latest = data.iloc[-1]
     previous = data.iloc[-2] if len(data) > 1 else latest
+
     change = latest["Close"] - previous["Close"]
-    change_percent = change / previous["Close"] * 100 if previous["Close"] else 0
+    change_percent = (
+        change / previous["Close"] * 100
+        if previous["Close"]
+        else 0
+    )
+
     support, resistance = find_support_resistance(data)
     alerts = build_alert_queue(data)
 
@@ -598,55 +581,68 @@ Alerts: {[message for _, message in alerts] or "None"}
 def get_openrouter_key() -> str:
     key = get_config("OPENROUTER_API_KEY")
 
-    if not key:
-        return ""
-
-    # OpenRouter keys normally begin with sk-or-v1-.
-    if not key.startswith("sk-or-v1-"):
+    if is_placeholder(key) or not key.startswith("sk-or-v1-"):
         return ""
 
     return key
 
 
-def explain_openrouter_error(response: requests.Response) -> str:
-    try:
-        payload = response.json()
-        error_data = payload.get("error", {})
+def extract_reasoning_details(message: Any) -> Any:
+    if hasattr(message, "model_dump"):
+        return message.model_dump().get("reasoning_details")
 
-        if isinstance(error_data, dict):
-            message = error_data.get("message", "")
-            code = error_data.get("code", response.status_code)
-        else:
-            message = str(error_data)
-            code = response.status_code
-    except ValueError:
-        message = response.text.strip()
-        code = response.status_code
+    return getattr(message, "reasoning_details", None)
 
-    message = message or "Unknown OpenRouter error"
 
-    if response.status_code in {401, 403} or "user not found" in message.lower():
+def convert_message_for_api(message: dict[str, Any]) -> dict[str, Any]:
+    result = {
+        "role": message["role"],
+        "content": message.get("content", ""),
+    }
+
+    reasoning_details = message.get("reasoning_details")
+
+    if reasoning_details is not None:
+        result["reasoning_details"] = reasoning_details
+
+    return result
+
+
+def describe_ai_error(error: Exception) -> str:
+    text = str(error)
+    lowered = text.lower()
+
+    if (
+        "user not found" in lowered
+        or "invalid api key" in lowered
+        or "401" in lowered
+        or "403" in lowered
+    ):
         return (
             "OpenRouter rejected the API key. Create a new key at "
-            "https://openrouter.ai/keys and replace OPENROUTER_API_KEY "
-            "in Streamlit Secrets. The key must start with sk-or-v1-. "
-            f"API response: {message} (code {code})"
+            "https://openrouter.ai/keys and set OPENROUTER_API_KEY "
+            "in the same terminal used to start Streamlit."
         )
 
-    if response.status_code == 402:
+    if "402" in lowered:
         return (
             "OpenRouter has no available credits for this request. "
-            "Add credits or choose an available free model. "
-            f"API response: {message}"
+            "Add credits or choose a free model."
         )
 
-    if response.status_code == 429:
+    if "429" in lowered:
+        return "OpenRouter rate limit reached. Please wait and try again."
+
+    if "model" in lowered and (
+        "not found" in lowered or "invalid" in lowered
+    ):
         return (
-            "OpenRouter rate limit reached. Wait a moment and try again. "
-            f"API response: {message}"
+            f"The selected model is unavailable: "
+            f"{get_config('OPENROUTER_MODEL', DEFAULT_MODEL)}. "
+            "Set OPENROUTER_MODEL to a valid OpenRouter model ID."
         )
 
-    return f"{message} (HTTP {code})"
+    return text
 
 
 def ask_ai_assistant(
@@ -659,16 +655,27 @@ def ask_ai_assistant(
     if not api_key:
         raise RuntimeError(
             "OPENROUTER_API_KEY is missing or invalid. "
-            "Add a new OpenRouter key beginning with sk-or-v1- "
-            "to Streamlit Secrets."
+            "It must begin with sk-or-v1-."
         )
 
+    model = get_config("OPENROUTER_MODEL", DEFAULT_MODEL)
+
+    client = OpenAI(
+        base_url=OPENROUTER_BASE_URL,
+        api_key=api_key,
+        default_headers={
+            "HTTP-Referer": "http://localhost:8501",
+            "X-Title": "Tradesphere",
+        },
+    )
+
+    # The current user question has already been added by the UI.
+    # Exclude it here so it is not sent twice.
+    previous_messages = st.session_state.ai_messages[:-1]
+
     history = [
-        {
-            "role": message["role"],
-            "content": message.get("content", ""),
-        }
-        for message in st.session_state.ai_messages[-8:]
+        convert_message_for_api(message)
+        for message in previous_messages[-8:]
         if message.get("role") in {"user", "assistant"}
     ]
 
@@ -691,49 +698,22 @@ def ask_ai_assistant(
         },
     ]
 
-    model = get_config("OPENROUTER_MODEL", DEFAULT_MODEL)
-
     try:
-        response = requests.post(
-            OPENROUTER_URL,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": get_config(
-                    "APP_URL",
-                    "https://tradesphere.streamlit.app",
-                ),
-                "X-Title": "Tradesphere AI",
-            },
-            json={
-                "model": model,
-                "messages": messages,
-                "temperature": 0.2,
-                "max_tokens": 700,
-            },
-            timeout=60,
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            extra_body={"reasoning": {"enabled": True}},
+            temperature=0.2,
+            max_tokens=700,
         )
-    except requests.RequestException as error:
-        raise RuntimeError(
-            f"Could not connect to OpenRouter: {error}"
-        ) from error
+    except Exception as error:
+        raise RuntimeError(describe_ai_error(error)) from error
 
-    if not response.ok:
-        raise RuntimeError(explain_openrouter_error(response))
-
-    try:
-        payload = response.json()
-    except ValueError as error:
-        raise RuntimeError(
-            "OpenRouter returned an invalid JSON response."
-        ) from error
-
-    choices = payload.get("choices", [])
-
-    if not choices:
+    if not response.choices:
         raise RuntimeError("OpenRouter returned no response choices.")
 
-    answer = choices[0].get("message", {}).get("content", "")
+    assistant_message = response.choices[0].message
+    answer = assistant_message.content or ""
 
     if isinstance(answer, list):
         answer = "\n".join(
@@ -746,6 +726,17 @@ def ask_ai_assistant(
 
     if not answer:
         raise RuntimeError("OpenRouter returned an empty response.")
+
+    reasoning_details = extract_reasoning_details(assistant_message)
+
+    st.session_state.last_reasoning_details = reasoning_details
+    st.session_state.ai_messages.append(
+        {
+            "role": "assistant",
+            "content": answer,
+            "reasoning_details": reasoning_details,
+        }
+    )
 
     return answer
 
@@ -763,6 +754,7 @@ def show_ai_assistant(ticker: str, data: pd.DataFrame) -> None:
 
     if st.button("🧹 Clear AI conversation"):
         st.session_state.ai_messages = []
+        st.session_state.last_reasoning_details = None
         st.rerun()
 
     for message in st.session_state.ai_messages:
@@ -785,20 +777,29 @@ def show_ai_assistant(ticker: str, data: pd.DataFrame) -> None:
         with st.spinner("Analyzing market data..."):
             try:
                 answer = ask_ai_assistant(question, ticker, data)
-                st.session_state.ai_messages.append(
-                    {"role": "assistant", "content": answer}
-                )
+                st.markdown(answer)
             except Exception as error:
-                answer = str(error)
+                st.error(f"AI Assistant error: {error}")
 
-        if "OpenRouter rejected the API key" in answer:
-            st.error(answer)
-            st.info(
-                "After updating Streamlit Secrets, restart the app or "
-                "clear the app cache."
-            )
-        else:
-            st.error(f"AI Assistant error: {answer}")
+
+def initialize_session() -> None:
+    defaults = {
+        "authenticated": False,
+        "login_error": "",
+        "ai_messages": [],
+        "last_reasoning_details": None,
+    }
+
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+
+initialize_session()
+
+if not st.session_state.authenticated:
+    show_login_page()
+    st.stop()
 
 
 with st.sidebar:
@@ -855,6 +856,10 @@ with st.sidebar:
 
     st.divider()
 
+    st.caption(
+        f"AI model: `{get_config('OPENROUTER_MODEL', DEFAULT_MODEL)}`"
+    )
+
     if st.button("🚪 Logout", use_container_width=True):
         st.session_state.authenticated = False
         st.session_state.ai_messages = []
@@ -891,7 +896,11 @@ latest = data.iloc[-1]
 previous = data.iloc[-2] if len(data) > 1 else latest
 
 price_change = latest["Close"] - previous["Close"]
-percent_change = price_change / previous["Close"] * 100 if previous["Close"] else 0
+percent_change = (
+    price_change / previous["Close"] * 100
+    if previous["Close"]
+    else 0
+)
 
 left, right = st.columns([4, 1])
 
@@ -935,6 +944,7 @@ st.markdown(
 st.caption("Educational analytics only — not financial advice.")
 
 metric_1, metric_2, metric_3, metric_4 = st.columns(4)
+
 metric_1.metric(
     "Latest Price",
     money(latest["Close"]),
@@ -1075,6 +1085,7 @@ with news_tab:
                 timeout=20,
             )
             response.raise_for_status()
+
             articles = response.json().get("articles", [])
 
             if not articles:
@@ -1088,6 +1099,7 @@ with news_tab:
                         "Unknown source",
                     )
                     st.markdown(f"- [{title}]({url}) — *{source}*")
+
         except Exception as error:
             st.error(f"News request failed: {error}")
     else:
